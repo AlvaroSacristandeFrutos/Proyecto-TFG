@@ -32,18 +32,18 @@ namespace JTAG {
         uint8_t bitCount; //Nº de saltos hasta el siguiente estado
     };
 
-    std::string tapStateToString(TAPState state);
+    std::string tapStateToString(TAPState state); //Definimos los estados posibles
 
     class JtagStateMachine {
     public:
         JtagStateMachine() = default;
         ~JtagStateMachine() = default;
 
-        static JtagPath getPath(TAPState from, TAPState to);
-        static TAPState nextState(TAPState current, bool tms);
+        static JtagPath getPath(TAPState from, TAPState to); //Defino la funcion que obtiene el path más corto para ese estado
+        static TAPState nextState(TAPState current, bool tms); //Defino el salto al siguiente
 
     private:
-        static const JtagPath lookupTable[16][16];
+        static const JtagPath lookupTable[16][16]; //Tabla estática para mejorar la velocidad y no hacerlo dinámicamente
     };
 
 } // namespace JTAG
