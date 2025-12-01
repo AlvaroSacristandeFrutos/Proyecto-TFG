@@ -1,23 +1,35 @@
-cmake_minimum_required(VERSION 3.10)
-project(BoundaryScannerImGui)
+cmake_minimum_required(VERSION 3.16)
 
+# Nombre del proyecto
+project(JtagScannerQt LANGUAGES CXX)
+
+# Estándar C++
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Incluir src y src/imgui para encontrar los headers
+# Configuración Qt Automática
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_AUTOUIC ON)
+
+# Buscar Qt6
+find_package(Qt6 COMPONENTS Widgets Core Gui REQUIRED)
+
+# Incluir la carpeta src para que los #include funcionen
 include_directories(src)
-include_directories(src/imgui)
 
-# Buscar recursivamente tus fuentes y las de imgui
-file(GLOB_RECURSE ALL_SOURCES "src/*.cpp" "src/*.h")
+# --- BÚSQUEDA AUTOMÁTICA DE ARCHIVOS ---
+# Esto busca CUALQUIER .cpp o .h dentro de 'src' y todas sus subcarpetas.
+# Así no importa si mueves ScanController a 'core' o 'controller'.
+file(GLOB_RECURSE PROJECT_SOURCES "src/*.cpp" "src/*.h")
 
-# Crear el ejecutable (WIN32 quita la consola negra de fondo, opcional)
-add_executable(JtagGUI WIN32 ${ALL_SOURCES})
+# --- CREAR EJECUTABLE ---
+add_executable(JtagScannerQt WIN32 ${PROJECT_SOURCES})
 
-# LIBRERÍAS DE WINDOWS (DirectX 11)
-# ImGui necesita esto para dibujar en pantalla
-if(WIN32)
-    target_link_libraries(JtagGUI d3d11 d3dcompiler)
+# --- LINKADO ---
+target_link_libraries(JtagScannerQt PRIVATE Qt6::Widgets Qt6::Core Qt6::Gui)
+
+# Corrección para Linux (ignóralo en Windows)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(JtagScannerQt PRIVATE dl)
 endif()
-
-# Si usas Linux en el futuro, necesitarías glfw/opengl, pero en Windows esto basta.
