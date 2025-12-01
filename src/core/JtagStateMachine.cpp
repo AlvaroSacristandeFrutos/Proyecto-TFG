@@ -99,7 +99,7 @@ namespace JTAG {
         { P(0x0f,4), P(0x01,2), P(0x03,2), P(0x03,3), P(0x03,4), P(0x0b,4), P(0x0b,5), P(0x2b,6), P(0x1b,5), P(0x07,3), P(0x07,4), P(0x00,1), P(0x02,2), P(0x02,3), P(0x00,0), P(0x01,1) },
 
         // [15] FROM: UPDATE_IR
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x07,3), P(0x00,1), P(0x01,1), P(0x01,2), P(0x01,3), P(0x05,3), P(0x05,4), P(0x15,5), P(0x0d,4), P(0x03,2), P(0x03,3), P(0x03,4), P(0x07,4), P(0x07,5), P(0x17,6), P(0x00,0) }
     };
 
