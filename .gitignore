@@ -1,0 +1,17 @@
+# Directorios de compilación y temporales
+build/
+out/
+cmake-build-debug/
+.vs/
+.vscode/
+
+# Archivos compilados
+*.exe
+*.dll
+*.lib
+*.obj
+*.pdb
+*.ilk
+
+# Archivos de usuario de Visual Studio
+*.user
