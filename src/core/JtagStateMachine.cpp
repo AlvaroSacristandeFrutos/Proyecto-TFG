@@ -4,7 +4,7 @@
 namespace JTAG {
 
     // ============================================================================
-    // HELPERS
+    // TABLA DE ESTADOS
     // ============================================================================
 
     std::string tapStateToString(TAPState state) {
@@ -34,79 +34,80 @@ namespace JTAG {
     // ============================================================================
 
     // Macro para definir rutas: {bits_tms, numero_bits}
+    // //Las filas son el estado actual y las columnas el next state
     // Nota: Los bits se envían LSB primero (bit 0, luego bit 1...)
 #define P(bits, count) {bits, count}
 
     const JtagPath JtagStateMachine::lookupTable[16][16] = {
         // [0] FROM: TEST_LOGIC_RESET
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x01,1), P(0x00,1), P(0x02,2), P(0x02,3), P(0x02,4), P(0x0a,4), P(0x0a,5), P(0x2a,6), P(0x1a,5), P(0x06,3), P(0x06,4), P(0x06,5), P(0x0e,5), P(0x0e,6), P(0x2e,7), P(0x1e,6) },
 
         // [1] FROM: RUN_TEST_IDLE
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x07,3), P(0x00,0), P(0x01,1), P(0x01,2), P(0x01,3), P(0x05,3), P(0x05,4), P(0x15,5), P(0x0d,4), P(0x03,2), P(0x03,3), P(0x03,4), P(0x07,4), P(0x07,5), P(0x17,6), P(0x0f,5) },
 
         // [2] FROM: SELECT_DR_SCAN
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x03,2), P(0x03,3), P(0x00,0), P(0x00,1), P(0x00,2), P(0x02,2), P(0x02,3), P(0x0a,4), P(0x06,3), P(0x01,1), P(0x01,2), P(0x01,3), P(0x03,3), P(0x03,4), P(0x0b,5), P(0x07,4) },
 
         // [3] FROM: CAPTURE_DR
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x1f,5), P(0x03,3), P(0x07,3), P(0x00,0), P(0x00,1), P(0x01,1), P(0x01,2), P(0x05,3), P(0x03,2), P(0x0f,4), P(0x0f,5), P(0x0f,6), P(0x1f,6), P(0x1f,7), P(0x5f,8), P(0x3f,7) },
 
         // [4] FROM: SHIFT_DR
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x1f,5), P(0x03,3), P(0x07,3), P(0x07,4), P(0x00,0), P(0x01,1), P(0x01,2), P(0x05,3), P(0x03,2), P(0x0f,4), P(0x0f,5), P(0x0f,6), P(0x1f,6), P(0x1f,7), P(0x5f,8), P(0x3f,7) },
 
         // [5] FROM: EXIT1_DR
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x0f,4), P(0x01,2), P(0x03,2), P(0x03,3), P(0x03,4), P(0x00,0), P(0x00,1), P(0x02,2), P(0x01,1), P(0x07,3), P(0x07,4), P(0x07,5), P(0x0f,5), P(0x0f,6), P(0x2f,7), P(0x1f,6) },
 
         // [6] FROM: PAUSE_DR
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x1f,5), P(0x03,3), P(0x07,3), P(0x07,4), P(0x01,2), P(0x05,3), P(0x00,0), P(0x01,1), P(0x03,2), P(0x0f,4), P(0x0f,5), P(0x0f,6), P(0x1f,6), P(0x1f,7), P(0x5f,8), P(0x3f,7) },
 
         // [7] FROM: EXIT2_DR
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x0f,4), P(0x01,2), P(0x03,2), P(0x03,3), P(0x00,1), P(0x02,2), P(0x02,3), P(0x00,0), P(0x01,1), P(0x07,3), P(0x07,4), P(0x07,5), P(0x0f,5), P(0x0f,6), P(0x2f,7), P(0x1f,6) },
 
         // [8] FROM: UPDATE_DR
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x07,3), P(0x00,1), P(0x01,1), P(0x01,2), P(0x01,3), P(0x05,3), P(0x05,4), P(0x15,5), P(0x00,0), P(0x03,2), P(0x03,3), P(0x03,4), P(0x07,4), P(0x07,5), P(0x17,6), P(0x0f,5) },
 
         // [9] FROM: SELECT_IR_SCAN
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x01,1), P(0x01,2), P(0x05,3), P(0x05,4), P(0x05,5), P(0x15,5), P(0x15,6), P(0x55,7), P(0x35,6), P(0x00,0), P(0x00,1), P(0x00,2), P(0x02,2), P(0x02,3), P(0x0a,4), P(0x06,3) },
 
         // [10] FROM: CAPTURE_IR
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x1f,5), P(0x03,3), P(0x07,3), P(0x07,4), P(0x07,5), P(0x17,5), P(0x17,6), P(0x57,7), P(0x37,6), P(0x0f,4), P(0x00,0), P(0x00,1), P(0x01,1), P(0x01,2), P(0x05,3), P(0x03,2) },
 
         // [11] FROM: SHIFT_IR
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x1f,5), P(0x03,3), P(0x07,3), P(0x07,4), P(0x07,5), P(0x17,5), P(0x17,6), P(0x57,7), P(0x37,6), P(0x0f,4), P(0x07,4), P(0x00,0), P(0x01,1), P(0x01,2), P(0x05,3), P(0x03,2) },
 
         // [12] FROM: EXIT1_IR
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x0f,4), P(0x01,2), P(0x03,2), P(0x03,3), P(0x03,4), P(0x0b,4), P(0x0b,5), P(0x2b,6), P(0x1b,5), P(0x07,3), P(0x03,3), P(0x03,4), P(0x00,0), P(0x00,1), P(0x02,2), P(0x01,1) },
 
         // [13] FROM: PAUSE_IR
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x1f,5), P(0x03,3), P(0x07,3), P(0x07,4), P(0x07,5), P(0x17,5), P(0x17,6), P(0x57,7), P(0x37,6), P(0x0f,4), P(0x0f,5), P(0x01,2), P(0x05,3), P(0x00,0), P(0x01,1), P(0x03,2) },
 
         // [14] FROM: EXIT2_IR
-        // To: TL_RESET, IDLE,       SEL_DR,     CAP_DR,     SHIFT_DR,   EXIT1_DR,   PAUSE_DR,   EXIT2_DR,   UPD_DR,     SEL_IR,     CAP_IR,     SHIFT_IR,   EXIT1_IR,   PAUSE_IR,   EXIT2_IR,   UPD_IR
+        //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x0f,4), P(0x01,2), P(0x03,2), P(0x03,3), P(0x03,4), P(0x0b,4), P(0x0b,5), P(0x2b,6), P(0x1b,5), P(0x07,3), P(0x07,4), P(0x00,1), P(0x02,2), P(0x02,3), P(0x00,0), P(0x01,1) },
 
         // [15] FROM: UPDATE_IR
         //To: TL_RESET, IDLE,   SEL_DR,    CAP_DR,    SHIFT_DR,  EXIT1_DR,  PAUSE_DR,  EXIT2_DR,  UPD_DR,    SEL_IR,    CAP_IR,    SHIFT_IR,  EXIT1_IR,  PAUSE_IR,  EXIT2_IR,  UPD_IR
         { P(0x07,3), P(0x00,1), P(0x01,1), P(0x01,2), P(0x01,3), P(0x05,3), P(0x05,4), P(0x15,5), P(0x0d,4), P(0x03,2), P(0x03,3), P(0x03,4), P(0x07,4), P(0x07,5), P(0x17,6), P(0x00,0) }
     };
-
+    //Definimos la función que devuelve la ruta más corta (bits en TMS y nº de saltos)
     JtagPath JtagStateMachine::getPath(TAPState from, TAPState to) {
         return lookupTable[static_cast<int>(from)][static_cast<int>(to)];
     }
-
+    //Definimos los siguientes saltos posibles, en función de si pongo un 0 o un 1
     TAPState JtagStateMachine::nextState(TAPState current, bool tms) {
         switch (current) {
         case TAPState::TEST_LOGIC_RESET: return tms ? TAPState::TEST_LOGIC_RESET : TAPState::RUN_TEST_IDLE;
