@@ -10,4 +10,4 @@ Entra en la carpeta build que se acaba de generar
 
 Doble clic en JtagScannerQt.sln
 
-Si no se tiene el CMAKE no hay problema, en breves intentaré actualizar el proyecto para que ya no sea necesario.
+Si no funciona, en el branch development está el .exe con todas las dll necesarias para ejecutar el estado actual (lo actualizaré con el código fuente a lo largo de la semana)
