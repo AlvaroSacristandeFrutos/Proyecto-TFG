@@ -1,0 +1,183 @@
+-- BSDL file for main module
+-- Device IDCODE: 0x47FAB
+-- Generated for IEEE 1149.1 compliance
+
+entity TP1_laRVa is
+  generic (PHYSICAL_PIN_MAP: string := "CUSTOM_PACKAGE");
+  port (
+    -- Clock
+    CLKIN        : in    bit;
+    -- UART Console
+    RXD          : in    bit;
+    TXD          : out   bit;
+    -- UART1 GPS
+    RXD1         : in    bit;
+    TXD1         : out   bit;
+    -- UART2 ESP32-C3
+    RXD2         : in    bit;
+    TXD2         : out   bit;
+    -- ICE SPI
+    ICE_SCK      : out   bit;
+    ICE_MOSI     : out   bit;
+    ICE_MISO     : in    bit;
+    -- Chip Selects
+    BME680_CS    : out   bit;
+    ADC_CS       : out   bit;
+    -- LoRa SPI
+    LORA_SCK     : out   bit;
+    LORA_MOSI    : out   bit;
+    LORA_MISO    : in    bit;
+    LORA_CS      : out   bit;
+    -- LoRa control
+    LORA_BUSY    : in    bit;
+    LORA_DIO1    : in    bit;
+    LORA_RESET   : out   bit;
+    L_RX         : out   bit;
+    L_TX         : out   bit;
+    -- LEDs
+    ICE_LED1     : out   bit;
+    ICE_LED2     : out   bit;
+    ICE_LED3     : out   bit;
+    ICE_LED4     : out   bit;
+    -- Power enables
+    EN_5V_UP     : out   bit;
+    EN_5V_M4     : out   bit;
+    EN_1V4_M4    : out   bit;
+    M2_ON_OFF    : out   bit;
+    -- JTAG signals (not in boundary scan)
+    TCK          : linkage bit;
+    TMS          : linkage bit;
+    TDI          : linkage bit;
+    TDO          : linkage bit
+  );
+
+  -- use STD_1149_1_1994.all;
+  use STD_1149_1_2001.all;
+  
+  attribute COMPONENT_CONFORMANCE of TP1_laRVa : entity is "STD_1149_1_2001"; 
+  
+  attribute PIN_MAP of TP1_laRVa : entity is PHYSICAL_PIN_MAP;
+  constant CUSTOM_PACKAGE : PIN_MAP_STRING :=
+"CLKIN:P1," &
+"RXD:P8," &
+"TXD:P9," &
+"RXD1:P49," &
+"TXD1:P52," &
+"RXD2:P122," &
+"TXD2:P121," &
+"ICE_SCK:P2," &
+"ICE_MOSI:P3," &
+"ICE_MISO:P4," &
+"BME680_CS:P5," &
+"ADC_CS:P6," &
+"LORA_SCK:P115," &
+"LORA_MOSI:P110," &
+"LORA_MISO:P113," &
+"LORA_CS:P117," &
+"LORA_BUSY:P7," &
+"LORA_DIO1:P10," &
+"LORA_RESET:P119," &
+"L_RX:P11," &
+"L_TX:P12," &
+"ICE_LED1:P13," &
+"ICE_LED2:P14," &
+"ICE_LED3:P15," &
+"ICE_LED4:P16," &
+"EN_5V_UP:P17," &
+"EN_5V_M4:P18," &
+"EN_1V4_M4:P19," &
+"M2_ON_OFF:P20," &
+"TCK:P30," &
+"TMS:P31," &
+"TDI:P32," &
+"TDO:P33";
+
+  attribute INSTRUCTION_LENGTH of TP1_laRVa : entity is 3;
+
+  attribute INSTRUCTION_OPCODE of TP1_laRVa : entity is
+    "BYPASS      (111)," &
+    "EXTEST      (010)," &
+    "INTEST      (011)," &
+    "SAMPLE      (001)," &
+    "PRELOAD     (001)," &
+    "CAPTURE     (001)," &
+    "IDCODE      (000)";
+
+  attribute INSTRUCTION_CAPTURE of TP1_laRVa : entity is "001";
+  
+  attribute IDCODE_REGISTER of TP1_laRVa : entity is "00000000000001000111111110101011"; --X"00047FAB";
+
+  attribute REGISTER_ACCESS of TP1_laRVa : entity is
+    "BYPASS    (BYPASS)," &
+    "DEVICE_ID (IDCODE)," &
+    "BOUNDARY  (INTEST,EXTEST,SAMPLE,CAPTURE,PRELOAD)";
+  
+  attribute TAP_SCAN_CLOCK of TCK   : signal is (10.0e6, BOTH);
+  attribute TAP_SCAN_IN    of TDI   : signal is true;
+  attribute TAP_SCAN_MODE  of TMS   : signal is true;
+  attribute TAP_SCAN_OUT   of TDO   : signal is true;
+  -- attribute TAP_SCAN_RESET of TRST_N: signal is true;
+  
+  -- Boundary scan register description
+  attribute BOUNDARY_LENGTH of TP1_laRVa : entity is 30;
+
+  attribute BOUNDARY_REGISTER of TP1_laRVa : entity is
+-- The following list specifies the characteristics of each cell in the boundary 
+-- scan register from TDI to TDO. The following is a description of the label 
+-- fields:
+--      num     : Is the cell number.
+--      cell    : Is the cell type as defined by the standard.
+--      port    : Is the design port name. Control cells do not have a port 
+--                name.
+--      function: Is the function of the cell as defined by the standard. Is one 
+--                of input, output2, output3, bidir, control or controlr.
+--      safe    : Specifies the value that the BSR cell should be loaded with 
+--                for safe operation when the software might otherwise choose a 
+--                random value.
+--      ccell   : The control cell number. Specifies the control cell that 
+--                drives the output enable for this port.
+--      disval  : Specifies the value that is loaded into the control cell to 
+--                disable the output enable for the corresponding port.
+--      rslt    : Resulting state. Shows the state of the driver when it is 
+--                disabled.
+-- num (cell_type, port, function, safe[, ccell, disval, rslt])    
+"29 (BC_1, CLKIN     , input   , X)," &
+"28 (BC_1, internal  , internal, X)," &
+                     
+"27 (BC_1, TXD       , output2  , X)," &
+"26 (BC_1, RXD       , input   , X)," &
+                     
+"25 (BC_1, TXD1      , output2  , X)," &
+"24 (BC_1, RXD1      , input   , X)," &
+                     
+"23 (BC_1, TXD2      , output2  , X)," &
+"22 (BC_1, RXD2      , input   , X)," &
+                     
+"21 (BC_1, ICE_SCK   , output2  , X)," &
+"20 (BC_1, ICE_MOSI  , output2  , X)," &
+"19 (BC_1, ICE_MISO  , input   , X)," &
+"18 (BC_1, BME680_CS , output2  , X)," &
+                     
+"17 (BC_1, ADC_CS    , output2  , X)," &
+                     
+"16 (BC_1, LORA_SCK  , output2  , X)," &
+"15 (BC_1, LORA_MOSI , output2  , X)," &
+"14 (BC_1, LORA_MISO , input   , X)," &
+                     
+"13 (BC_1, LORA_CS   , output2  , X)," &
+"12 (BC_1, LORA_RESET, output2  , X)," &    
+
+"11 (BC_1, L_RX      , output2  , X)," &
+"10 (BC_1, L_TX      , output2  , X)," &
+
+"9  (BC_1, EN_5V_UP  , output2  , X)," &
+"8  (BC_1, EN_5V_M4  , output2  , X)," &
+"7  (BC_1, EN_1V4_M4 , output2  , X)," &    
+"6  (BC_1, M2_ON_OFF , output2  , X)," &    
+"5  (BC_1, ICE_LED1  , output2  , X)," &    
+"4  (BC_1, ICE_LED2  , output2  , X)," &    
+"3  (BC_1, ICE_LED3  , output2  , X)," &    
+"2  (BC_1, ICE_LED4  , output2  , X)," &    
+"1  (BC_1, LORA_DIO1 , input   , X)," &        
+"0  (BC_1, LORA_BUSY , input   , X)"; 
+end TP1_laRVa;

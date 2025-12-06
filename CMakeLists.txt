@@ -19,9 +19,8 @@ find_package(Qt6 COMPONENTS Widgets Core Gui REQUIRED)
 include_directories(src)
 
 # --- BÚSQUEDA AUTOMÁTICA DE ARCHIVOS ---
-# Esto busca CUALQUIER .cpp o .h dentro de 'src' y todas sus subcarpetas.
-# Así no importa si mueves ScanController a 'core' o 'controller'.
-file(GLOB_RECURSE PROJECT_SOURCES "src/*.cpp" "src/*.h")
+# CORRECCIÓN: Añadido "src/*.ui" al final para que detecte mainwindow.ui
+file(GLOB_RECURSE PROJECT_SOURCES "src/*.cpp" "src/*.h" "src/*.ui")
 
 # --- CREAR EJECUTABLE ---
 add_executable(JtagScannerQt WIN32 ${PROJECT_SOURCES})
@@ -29,7 +28,7 @@ add_executable(JtagScannerQt WIN32 ${PROJECT_SOURCES})
 # --- LINKADO ---
 target_link_libraries(JtagScannerQt PRIVATE Qt6::Widgets Qt6::Core Qt6::Gui)
 
-# Corrección para Linux (ignóralo en Windows)
+# Corrección para Linux
 if(UNIX AND NOT APPLE)
     target_link_libraries(JtagScannerQt PRIVATE dl)
 endif()

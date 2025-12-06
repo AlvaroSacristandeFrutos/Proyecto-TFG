@@ -2,85 +2,185 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QToolBar>
-#include <QStatusBar>
-#include <QDockWidget>
-#include <QAction>
+#include <QGraphicsScene>
+#include <QGraphicsView>
+#include <QComboBox>
 #include <QLabel>
 #include <QTimer>
+#include <QActionGroup>
+#include <QElapsedTimer>
 #include <memory>
+#include <deque>
+#include <map>
+#include <string>
 
-// --- CORRECCI”N CRÕTICA ---
-// Incluimos el fichero directamente para que el compilador vea la clase completa
-// y sepa que pertenece al namespace JTAG.
-#include "../controller/ScanController.h"
+#include "ChipVisualizer.h"
 
-// Forward declarations de las clases de GUI (estas sÌ pueden quedarse asÌ)
-class ChipVisualizer;
-class PinControlPanel;
+// Forward declarations for your backend
+namespace JTAG {
+    class ScanController;
+    enum class PinLevel;
+}
 
-class MainWindow : public QMainWindow {
+QT_BEGIN_NAMESPACE
+namespace Ui {
+    class MainWindow;
+}
+QT_END_NAMESPACE
+
+class MainWindow : public QMainWindow
+{
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget* parent = nullptr);
-    ~MainWindow() override;
+    MainWindow(QWidget *parent = nullptr);
+    ~MainWindow();
 
 private slots:
-    void onConnectAdapter();
-    void onDisconnect();
-    void onEnterSample();
-    void onEnterExtest();
-    void onEnterBypass();
-    void onLoadBSDL();
-    void onInitializeDevice();
-    void onResetTAP();
-    void onPinChanged(const QString& pinName, bool level);
-    void onBusWrite(const QStringList& pins, uint32_t value);
-    void onRefreshPins();
-    void onAutoRefreshToggled(bool enabled);
+    // File menu actions
+    void onNewProjectWizard();
+    void onOpen();
+    void onSave();
+    void onSaveAs();
+    void onExit();
+
+    // View menu actions
+    void onTogglePins(bool checked);
+    void onToggleWatch(bool checked);
+    void onToggleWaveform(bool checked);
+    void onZoom();
+    void onInoutPinsDisplaying(bool isIN);
+
+    // Scan menu actions
+    void onJTAGConnection();
+    void onExamineChain();
+    void onRun();
+    void onJTAGReset();
+    void onDeviceInstruction();
+    void onDeviceBSDLFile();
+    void onDevicePackage();
+    void onDeviceProperties();
+
+    // Pins menu actions
+    void onSearchPins();
+    void onEditPinNamesAndBuses();
+    void onSetTo0();
+    void onSetTo1();
+    void onSetToZ();
+    void onTogglePinValue();
+    void onSetBusValue();
+    void onSetBusToAllZ();
+    void onSetAllDevicePinsToBSDLSafe();
+
+    // Watch menu actions
+    void onWatchShow();
+    void onWatchAddSignal();
+    void onWatchRemove();
+    void onWatchRemoveAll();
+    void onWatchZeroTransitionCounter();
+    void onWatchZeroAllTransitionCounters();
+
+    // Waveform menu actions
+    void onWaveformClose();
+    void onWaveformAddSignal();
+    void onWaveformRemove();
+    void onWaveformRemoveAll();
+    void onWaveformClear();
+    void onWaveformZoom();
+    void onWaveformZoomIn();
+    void onWaveformZoomOut();
+    void onWaveformGoToTime();
+    void onWaveformPreviousEvent();
+    void onWaveformNextEvent();
+
+    // Help menu actions
+    void onHelpContents();
+    void onTurnOnLogging();
+    void onRegister();
     void onAbout();
 
+    // Toolbar actions
+    void onInstruction();
+
+    // Pins panel actions
+    void onDeviceChanged(int index);
+    void onSearchPinsButton();
+    void onPinTableSelectionChanged();  // NEW: Highlight pin in visualizer
+
+    // Waveform toolbar actions (internal waveform controls)
+    void onWaveZoomIn();
+    void onWaveZoomOut();
+    void onWaveFit();
+    void onWavePrev();
+    void onWaveNext();
+    void onWaveGoto();
+
+    // Timer for polling backend
+    void onPollTimer();
+
 private:
-    void createActions();
-    void createMenus();
-    void createToolBars();
-    void createDockWidgets();
-    void createStatusBar();
-    void connectBackend();
-    void updateConnectionStatus();
-    void updateDeviceInfo();
-    void updatePinStates();
+    Ui::MainWindow *ui;
+    
+    // Backend controller - AQU√ç CONECTAR√ÅS TU SCANCONTROLLER
+    std::unique_ptr<JTAG::ScanController> scanController;
 
-    ChipVisualizer* m_chipVisualizer;
-    PinControlPanel* m_pinControlPanel;
+    // Graphics scenes for rendering
+    QGraphicsScene *waveformScene;
 
-    // --- CORRECCI”N: Usamos JTAG::ScanController explÌcitamente ---
-    std::unique_ptr<JTAG::ScanController> m_controller;
+    // Chip visualization
+    ChipVisualizer *chipVisualizer;
+    
+    // Toolbar widgets
+    QComboBox *zoomComboBox;
+    
+    // Action group for IN/OUT of inout radio buttons
+    QActionGroup *inoutActionGroup;
+    
+    // Polling timer for updating pin states
+    QTimer *pollTimer;
+    
+    // Current zoom level
+    double currentZoom;
+    
+    // Connection state
+    bool isAdapterConnected;
+    bool isDeviceDetected;
+    bool isDeviceInitialized;
+    
+    // Waveform capture state
+    bool isCapturing;
+    double waveformTimebase; // in seconds
 
-    QToolBar* m_mainToolBar;
-    QToolBar* m_modeToolBar;
+    // Transition counters for Watch
+    std::map<std::string, int> transitionCounters;  // pinName -> count
+    std::map<std::string, JTAG::PinLevel> previousLevels;  // For edge detection
 
-    QAction* m_actConnect;
-    QAction* m_actDisconnect;
-    QAction* m_actLoadBSDL;
-    QAction* m_actInitDevice;
-    QAction* m_actSample;
-    QAction* m_actExtest;
-    QAction* m_actBypass;
-    QAction* m_actResetTAP;
-    QAction* m_actRefresh;
-    QAction* m_actAutoRefresh;
-    QAction* m_actAbout;
+    // Waveform capture structures
+    struct WaveformSample {
+        double timestamp;        // Seconds since capture start
+        JTAG::PinLevel level;
+    };
+    std::map<std::string, std::deque<WaveformSample>> waveformBuffer;
+    QElapsedTimer captureTimer;
+    const size_t MAX_WAVEFORM_SAMPLES = 10000;  // Circular buffer limit
 
-    QLabel* m_statusConnection;
-    QLabel* m_statusDevice;
-    QLabel* m_statusMode;
-
-    bool m_connected;
-    bool m_deviceInitialized;
-    QString m_currentMode;
-    QTimer* m_refreshTimer;
+    // Helper methods
+    void setupConnections();
+    void setupToolbar();
+    void setupGraphicsViews();
+    void setupTables();
+    void setupBackend();
+    void initializeUI();
+    void updateWindowTitle(const QString &filename = QString());
+    void updateStatusBar(const QString &message);
+    
+    // Backend integration helpers
+    void updatePinsTable();
+    void updateWatchTable();
+    void captureWaveformSample();
+    void redrawWaveform();
+    void enableControlsAfterConnection(bool enable);
+    void renderChipVisualization();
 };
 
 #endif // MAINWINDOW_H

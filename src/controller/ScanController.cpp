@@ -2,6 +2,7 @@
 #include "../parser/BSDLParser.h"
 #include "../core/BoundaryScanEngine.h"
 #include <iostream>
+#include <iomanip>
 #include <algorithm>
 #include <memory>
 
@@ -15,10 +16,11 @@ namespace JTAG {
         : adapter(nullptr)
         , engine(nullptr)
         , deviceModel(nullptr)
+        , bsdlCatalog(std::make_unique<BSDLCatalog>())
         , detectedIDCODE(0)
         , initialized(false)
     {
-        // std::cout << "ScanController created\n"; 
+        // std::cout << "ScanController created\n";
     }
 
     ScanController::~ScanController() {
@@ -115,6 +117,10 @@ namespace JTAG {
 
     std::string ScanController::getDeviceName() const {
         return deviceModel ? deviceModel->getDeviceName() : "";
+    }
+
+    std::string ScanController::getPackageInfo() const {
+        return deviceModel ? deviceModel->getPackageInfo() : "";
     }
 
     // ============================================================================
@@ -256,6 +262,59 @@ namespace JTAG {
 
     bool ScanController::initializeDevice() {
         return initialize();
+    }
+
+    bool ScanController::initializeBSDLCatalog(const std::string& directory) {
+        if (!bsdlCatalog) {
+            bsdlCatalog = std::make_unique<BSDLCatalog>();
+        }
+        return bsdlCatalog->scanDirectory(directory);
+    }
+
+    bool ScanController::autoLoadBSDL() {
+        std::cout << "[ScanController::autoLoadBSDL] Called" << std::endl;
+
+        if (!bsdlCatalog) {
+            std::cout << "[ScanController::autoLoadBSDL] ERROR: bsdlCatalog is NULL!" << std::endl;
+            return false;
+        }
+
+        if (detectedIDCODE == 0) {
+            std::cout << "[ScanController::autoLoadBSDL] ERROR: detectedIDCODE is 0!" << std::endl;
+            return false;
+        }
+
+        std::cout << "[ScanController::autoLoadBSDL] Looking for IDCODE 0x"
+                  << std::hex << std::setfill('0') << std::setw(8) << detectedIDCODE
+                  << std::dec << std::endl;
+        std::cout << "[ScanController::autoLoadBSDL] Catalog has "
+                  << bsdlCatalog->size() << " entries" << std::endl;
+
+        auto bsdlPath = bsdlCatalog->findByIDCODE(detectedIDCODE);
+
+        if (bsdlPath.has_value()) {
+            std::cout << "[ScanController::autoLoadBSDL] FOUND! Path: "
+                      << bsdlPath.value() << std::endl;
+            bool loaded = loadBSDL(bsdlPath.value());
+            std::cout << "[ScanController::autoLoadBSDL] loadBSDL returned: "
+                      << (loaded ? "TRUE" : "FALSE") << std::endl;
+            return loaded;
+        }
+
+        std::cout << "[ScanController::autoLoadBSDL] NOT FOUND in catalog!" << std::endl;
+        return false;
+    }
+
+    std::string ScanController::getPinPort(const std::string& pinName) const {
+        return deviceModel ? deviceModel->getPinPort(pinName) : "";
+    }
+
+    std::string ScanController::getPinType(const std::string& pinName) const {
+        return deviceModel ? deviceModel->getPinType(pinName) : "";
+    }
+
+    std::string ScanController::getPinNumber(const std::string& pinName) const {
+        return deviceModel ? deviceModel->getPinNumber(pinName) : "";
     }
 
 } // namespace JTAG

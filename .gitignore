@@ -12,6 +12,7 @@ cmake-build-debug/
 *.obj
 *.pdb
 *.ilk
+*.md
 
 # Archivos de usuario de Visual Studio
 *.user

@@ -9,6 +9,7 @@
 #include "../bsdl/DeviceModel.h"
 #include "../hal/IJTAGAdapter.h"       // Define AdapterDescriptor
 #include "../hal/factory/AdapterFactory.h"
+#include "../catalog/BSDLCatalog.h"
 
 namespace JTAG {
 
@@ -35,6 +36,7 @@ namespace JTAG {
         uint32_t detectDevice();
         bool loadBSDL(const std::string& bsdlPath);
         std::string getDeviceName() const;
+        std::string getPackageInfo() const;
 
         // Control
         bool initialize();
@@ -46,6 +48,11 @@ namespace JTAG {
         std::vector<std::string> getPinList() const;
         bool applyChanges();
         bool samplePins();
+
+        // Información adicional de pines
+        std::string getPinPort(const std::string& pinName) const;
+        std::string getPinType(const std::string& pinName) const;
+        std::string getPinNumber(const std::string& pinName) const;
 
         // Avanzado
         bool setPins(const std::map<std::string, PinLevel>& pins);
@@ -66,10 +73,21 @@ namespace JTAG {
         bool loadDeviceModel(const std::string& path = ""); // path opcional para el stub de prueba
         bool initializeDevice();
 
+        // Catálogo BSDL
+        bool initializeBSDLCatalog(const std::string& directory);
+        bool autoLoadBSDL();
+
+        // DEBUG: Obtener tamaño del catálogo
+        size_t getCatalogSize() const { return bsdlCatalog ? bsdlCatalog->size() : 0; }
+
+        // NUEVO: Exponer DeviceModel para visualización
+        const DeviceModel* getDeviceModel() const { return deviceModel.get(); }
+
     private:
         std::unique_ptr<IJTAGAdapter> adapter;
         std::unique_ptr<BoundaryScanEngine> engine;
         std::unique_ptr<DeviceModel> deviceModel;
+        std::unique_ptr<BSDLCatalog> bsdlCatalog;
 
         uint32_t detectedIDCODE;
         bool initialized;

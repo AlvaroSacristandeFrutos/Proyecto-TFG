@@ -13,6 +13,7 @@ namespace JTAG {
         this->idcode = data.idCode;
         this->bsrLength = data.boundaryLength;
         this->irLength = data.instructionLength;
+        this->packageInfo = data.physicalPinMap;
 
         // 1. Cargar Instrucciones
         this->instructions.clear();
@@ -39,7 +40,41 @@ namespace JTAG {
 
             // Crear entrada si no existe
             if (tempPinMap.find(cell.portName) == tempPinMap.end()) {
-                tempPinMap[cell.portName] = { cell.portName, -1, -1, -1 };
+                PinInfo newPin;
+                newPin.name = cell.portName;
+                newPin.port = cell.portName;  // Por defecto, port = name
+
+                // Determinar tipo basado en función de la celda
+                if (cell.function == CellFunction::INPUT) {
+                    newPin.type = "INPUT";
+                } else if (cell.function == CellFunction::OUTPUT2 || cell.function == CellFunction::OUTPUT3) {
+                    newPin.type = "OUTPUT";
+                } else if (cell.function == CellFunction::BIDIR) {
+                    newPin.type = "INOUT";
+                } else {
+                    newPin.type = "UNKNOWN";
+                }
+
+                // Pin number: buscar en pinMaps
+                // pinMaps es un map<string, vector<string>> donde la clave es el nombre del port
+                // y el valor es un vector de pines físicos asociados
+                auto pinIt = data.pinMaps.find(cell.portName);
+                if (pinIt != data.pinMaps.end() && !pinIt->second.empty()) {
+                    // Tomar el primer pin del vector directamente como string (soporta alfanuméricos)
+                    newPin.pinNumber = pinIt->second[0];
+                }
+
+                tempPinMap[cell.portName] = newPin;
+            } else {
+                // Si ya existe, actualizar tipo si es BIDIR
+                if (cell.function == CellFunction::INPUT &&
+                    tempPinMap[cell.portName].type == "OUTPUT") {
+                    tempPinMap[cell.portName].type = "INOUT";
+                } else if ((cell.function == CellFunction::OUTPUT2 ||
+                            cell.function == CellFunction::OUTPUT3) &&
+                           tempPinMap[cell.portName].type == "INPUT") {
+                    tempPinMap[cell.portName].type = "INOUT";
+                }
             }
 
             // Asignar índice de celda según función
@@ -53,8 +88,7 @@ namespace JTAG {
                 }
             }
             else if (cell.function == CellFunction::BIDIR) {
-                // BIDIR suele tener input y output en celdas distintas o compartidas según tecnología
-                // Simplificación: asumimos que esta celda actúa como output
+                tempPinMap[cell.portName].inputCell = cell.cellNumber;
                 tempPinMap[cell.portName].outputCell = cell.cellNumber;
             }
         }
@@ -83,6 +117,21 @@ namespace JTAG {
     uint32_t DeviceModel::getInstruction(const std::string& instructionName) const {
         auto it = instructions.find(instructionName);
         return (it != instructions.end()) ? it->second : 0xFFFFFFFF;
+    }
+
+    std::string DeviceModel::getPinPort(const std::string& pinName) const {
+        auto pinInfo = getPinInfo(pinName);
+        return pinInfo ? pinInfo->port : "";
+    }
+
+    std::string DeviceModel::getPinType(const std::string& pinName) const {
+        auto pinInfo = getPinInfo(pinName);
+        return pinInfo ? pinInfo->type : "";
+    }
+
+    std::string DeviceModel::getPinNumber(const std::string& pinName) const {
+        auto pinInfo = getPinInfo(pinName);
+        return pinInfo ? pinInfo->pinNumber : "";
     }
 
 } 
