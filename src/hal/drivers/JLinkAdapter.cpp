@@ -185,4 +185,107 @@ namespace JTAG {
         return writeTMS({ 1, 1, 1, 1, 1 });
     }
 
+    // ========== MÉTODOS DE ALTO NIVEL (transaccionales) ==========
+
+    bool JLinkAdapter::scanIR(uint8_t irLength, const std::vector<uint8_t>& dataIn,
+                              std::vector<uint8_t>& dataOut) {
+        if (!connected) return false;
+
+        std::cout << "[JLink] scanIR() - irLength: " << (int)irLength << "\n";
+
+        // Navegar a Shift-IR: TMS sequence = 1,1,0,0 desde Run-Test/Idle
+        std::vector<bool> toShiftIR = {true, true, false, false};
+        if (!writeTMS(toShiftIR)) {
+            std::cerr << "[JLink] ERROR: Failed to navigate to Shift-IR\n";
+            return false;
+        }
+
+        // Shift IR data
+        size_t byteCount = (irLength + 7) / 8;
+        dataOut.resize(byteCount);
+        if (!shiftData(dataIn, dataOut, irLength, true)) { // exitShift=true → Exit1-IR
+            std::cerr << "[JLink] ERROR: Failed to shift IR data\n";
+            return false;
+        }
+
+        // Navegar a Run-Test/Idle: TMS sequence = 1,0 desde Exit1-IR
+        std::vector<bool> toIdle = {true, false};
+        if (!writeTMS(toIdle)) {
+            std::cerr << "[JLink] ERROR: Failed to return to Idle\n";
+            return false;
+        }
+
+        std::cout << "[JLink] scanIR() - SUCCESS\n";
+        return true;
+    }
+
+    bool JLinkAdapter::scanDR(size_t drLength, const std::vector<uint8_t>& dataIn,
+                              std::vector<uint8_t>& dataOut) {
+        if (!connected) return false;
+
+        std::cout << "[JLink] scanDR() - drLength: " << drLength << "\n";
+
+        // Navegar a Shift-DR: TMS sequence = 1,0,0 desde Run-Test/Idle
+        std::vector<bool> toShiftDR = {true, false, false};
+        if (!writeTMS(toShiftDR)) {
+            std::cerr << "[JLink] ERROR: Failed to navigate to Shift-DR\n";
+            return false;
+        }
+
+        // Shift DR data
+        size_t byteCount = (drLength + 7) / 8;
+        dataOut.resize(byteCount);
+        if (!shiftData(dataIn, dataOut, drLength, true)) { // exitShift=true → Exit1-DR
+            std::cerr << "[JLink] ERROR: Failed to shift DR data\n";
+            return false;
+        }
+
+        // Navegar a Run-Test/Idle: TMS sequence = 1,0 desde Exit1-DR
+        std::vector<bool> toIdle = {true, false};
+        if (!writeTMS(toIdle)) {
+            std::cerr << "[JLink] ERROR: Failed to return to Idle\n";
+            return false;
+        }
+
+        std::cout << "[JLink] scanDR() - SUCCESS\n";
+        return true;
+    }
+
+    uint32_t JLinkAdapter::readIDCODE() {
+        if (!connected) return 0;
+
+        std::cout << "[JLink] readIDCODE()\n";
+
+        // Reset TAP (IDCODE se carga automáticamente en DR)
+        if (!resetTAP()) {
+            std::cerr << "[JLink] ERROR: Failed to reset TAP\n";
+            return 0;
+        }
+
+        // Navegar a Shift-DR: TMS = 0,1,0,0 desde Test-Logic-Reset
+        // (Reset→Idle→Select-DR→Capture-DR→Shift-DR)
+        std::vector<bool> toShiftDR = {false, true, false, false};
+        if (!writeTMS(toShiftDR)) {
+            std::cerr << "[JLink] ERROR: Failed to navigate to Shift-DR\n";
+            return 0;
+        }
+
+        // Leer 32 bits de IDCODE
+        std::vector<uint8_t> dummy(4, 0);
+        std::vector<uint8_t> idcodeBytes(4);
+        if (!shiftData(dummy, idcodeBytes, 32, true)) {
+            std::cerr << "[JLink] ERROR: Failed to read IDCODE\n";
+            return 0;
+        }
+
+        // Convertir bytes → uint32_t (little-endian)
+        uint32_t idcode = idcodeBytes[0] |
+                         (idcodeBytes[1] << 8) |
+                         (idcodeBytes[2] << 16) |
+                         (idcodeBytes[3] << 24);
+
+        std::cout << "[JLink] readIDCODE() - SUCCESS: 0x" << std::hex << idcode << std::dec << "\n";
+        return idcode;
+    }
+
 } // namespace JTAG

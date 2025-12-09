@@ -25,6 +25,13 @@ namespace JTAG {
         bool writeTMS(const std::vector<bool>& tmsSequence) override;
         bool resetTAP() override;
 
+        // Métodos de alto nivel (transaccionales)
+        bool scanIR(uint8_t irLength, const std::vector<uint8_t>& dataIn,
+                    std::vector<uint8_t>& dataOut) override;
+        bool scanDR(size_t drLength, const std::vector<uint8_t>& dataIn,
+                    std::vector<uint8_t>& dataOut) override;
+        uint32_t readIDCODE() override;
+
         std::string getName() const override { return "Mock JTAG Simulator"; }
         uint32_t getClockSpeed() const override { return clockSpeed; }
         bool setClockSpeed(uint32_t speedHz) override;

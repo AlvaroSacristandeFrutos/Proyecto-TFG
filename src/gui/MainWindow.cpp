@@ -23,7 +23,6 @@ MainWindow::MainWindow(QWidget *parent)
     , chipVisualizer(nullptr)
     , zoomComboBox(nullptr)
     , inoutActionGroup(nullptr)
-    , pollTimer(nullptr)
     , currentZoom(1.0)
     , isAdapterConnected(false)
     , isDeviceDetected(false)
@@ -50,8 +49,9 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
-    if (pollTimer) {
-        pollTimer->stop();
+    // Detener polling si está activo
+    if (scanController && isCapturing) {
+        scanController->stopPolling();
     }
     delete waveformScene;
     delete ui;
@@ -75,15 +75,20 @@ void MainWindow::setupBackend()
     }
     // ================================================================
 
+    // === CRÍTICO: Conectar señales del ScanController al MainWindow ===
+    connect(scanController.get(), &JTAG::ScanController::pinsDataReady,
+            this, &MainWindow::onPinsDataReady);
+    connect(scanController.get(), &JTAG::ScanController::errorOccurred,
+            this, &MainWindow::onScanError);
+    // ===================================================================
+
     // Inicializar catálogo BSDL
     QString testFilesPath = QCoreApplication::applicationDirPath() + "/../../test_files";
     scanController->initializeBSDLCatalog(testFilesPath.toStdString());
 
-    // Setup polling timer for updating pin states
-    pollTimer = new QTimer(this);
-    pollTimer->setInterval(100); // 100ms = 10 Hz refresh rate (ajusta según necesites)
-    connect(pollTimer, &QTimer::timeout, this, &MainWindow::onPollTimer);
-    // No iniciamos el timer hasta que haya conexión establecida
+    // NOTA: El polling ahora lo maneja ScanWorker en thread separado
+    // El worker emite señales que llegan aquí vía las conexiones de arriba
+    // No se usa QTimer - el worker emite señales automáticamente cada 100ms
 }
 
 void MainWindow::setupGraphicsViews()
@@ -529,18 +534,18 @@ void MainWindow::onRun()
     }
 
     if (!isCapturing) {
-        // Entrar en modo SAMPLE para capturar pines
+        // Entrar en modo SAMPLE para capturar pines (el worker lo maneja)
         if (scanController->enterSAMPLE()) {
             isCapturing = true;
             captureTimer.start();  // Start waveform timestamp tracking
-            pollTimer->start();
+            scanController->startPolling();  // Iniciar worker thread
             updateStatusBar("Running - capturing pin states");
             ui->actionRun->setText("Stop");
         }
     } else {
         // Detener captura
         isCapturing = false;
-        pollTimer->stop();
+        scanController->stopPolling();  // Detener worker thread
         updateStatusBar("Stopped");
         ui->actionRun->setText("Run");
     }
@@ -710,11 +715,11 @@ void MainWindow::onSetTo0()
         QTableWidgetItem *nameItem = ui->tableWidgetPins->item(row, 0);
         if (nameItem) {
             std::string pinName = nameItem->text().toStdString();
-            scanController->setPin(pinName, JTAG::PinLevel::LOW);
+            scanController->setPinAsync(pinName, JTAG::PinLevel::LOW);
         }
     }
 
-    scanController->applyChanges();
+    // No se necesita applyChanges() - el worker lo hace automáticamente
     updateStatusBar(QString("Set %1 pin(s) to 0").arg(rows.size()));
     // ================================================================
 }
@@ -737,11 +742,11 @@ void MainWindow::onSetTo1()
         QTableWidgetItem *nameItem = ui->tableWidgetPins->item(row, 0);
         if (nameItem) {
             std::string pinName = nameItem->text().toStdString();
-            scanController->setPin(pinName, JTAG::PinLevel::HIGH);
+            scanController->setPinAsync(pinName, JTAG::PinLevel::HIGH);
         }
     }
 
-    scanController->applyChanges();
+    // No se necesita applyChanges() - el worker lo hace automáticamente
     updateStatusBar(QString("Set %1 pin(s) to 1").arg(rows.size()));
 }
 
@@ -763,11 +768,11 @@ void MainWindow::onSetToZ()
         QTableWidgetItem *nameItem = ui->tableWidgetPins->item(row, 0);
         if (nameItem) {
             std::string pinName = nameItem->text().toStdString();
-            scanController->setPin(pinName, JTAG::PinLevel::HIGH_Z);
+            scanController->setPinAsync(pinName, JTAG::PinLevel::HIGH_Z);
         }
     }
 
-    scanController->applyChanges();
+    // No se necesita applyChanges() - el worker lo hace automáticamente
     updateStatusBar(QString("Set %1 pin(s) to Z").arg(rows.size()));
 }
 
@@ -798,12 +803,12 @@ void MainWindow::onTogglePinValue()
                 } else {
                     newLevel = JTAG::PinLevel::LOW;
                 }
-                scanController->setPin(pinName, newLevel);
+                scanController->setPinAsync(pinName, newLevel);
             }
         }
     }
 
-    scanController->applyChanges();
+    // No se necesita applyChanges() - el worker lo hace automáticamente
     updateStatusBar(QString("Toggled %1 pin(s)").arg(rows.size()));
 }
 
@@ -1293,30 +1298,9 @@ void MainWindow::onWaveGoto()
 // ============================================================================
 // POLLING AND BACKEND INTEGRATION
 // ============================================================================
-
-void MainWindow::onPollTimer()
-{
-    // ==================== PUNTO DE INTEGRACIÓN 10 ====================
-    if (!scanController || !isCapturing) {
-        return;
-    }
-
-    // 1. Capturar estado actual de pines
-    if (!scanController->samplePins()) {
-        updateStatusBar("Error sampling pins");
-        return;
-    }
-
-    // 2. Actualizar tabla de pines
-    updatePinsTable();
-
-    // 3. Actualizar tabla de watch
-    updateWatchTable();
-
-    // 4. Capturar muestra para waveform
-    captureWaveformSample();
-    // ================================================================
-}
+// NOTA: onPollTimer() ELIMINADO - El polling ahora lo maneja ScanWorker en thread separado
+//       Las actualizaciones de UI se hacen en onPinsDataReady() que recibe señales del worker
+// ============================================================================
 
 void MainWindow::updatePinsTable()
 {
@@ -1325,6 +1309,7 @@ void MainWindow::updatePinsTable()
 
     // Obtener lista de pines del modelo
     std::vector<std::string> pinNames = scanController->getPinList();
+    qDebug() << "[MainWindow::updatePinsTable] Updating" << pinNames.size() << "pins";
 
     // CAMBIO: Limpiar tabla antes de llenar (permite recargar BSDL)
     ui->tableWidgetPins->setRowCount(0);
@@ -1354,7 +1339,7 @@ void MainWindow::updatePinsTable()
         ui->tableWidgetPins->setItem(row, 4, new QTableWidgetItem(type));
     }
 
-    // Actualizar valores I/O
+    // Actualizar valores I/O en tabla Y en visualizador
     for (int row = 0; row < ui->tableWidgetPins->rowCount(); row++) {
         QTableWidgetItem *nameItem = ui->tableWidgetPins->item(row, 0);
         if (nameItem) {
@@ -1363,15 +1348,44 @@ void MainWindow::updatePinsTable()
 
             if (level.has_value()) {
                 QString valueStr;
+                VisualPinState visualState;
+
                 switch (level.value()) {
-                    case JTAG::PinLevel::LOW: valueStr = "0"; break;
-                    case JTAG::PinLevel::HIGH: valueStr = "1"; break;
-                    case JTAG::PinLevel::HIGH_Z: valueStr = "Z"; break;
+                    case JTAG::PinLevel::LOW:
+                        valueStr = "0";
+                        visualState = VisualPinState::LOW;
+                        break;
+                    case JTAG::PinLevel::HIGH:
+                        valueStr = "1";
+                        visualState = VisualPinState::HIGH;
+                        break;
+                    case JTAG::PinLevel::HIGH_Z:
+                        valueStr = "Z";
+                        visualState = VisualPinState::UNKNOWN;
+                        break;
                 }
 
+                // Actualizar tabla
                 QTableWidgetItem *valueItem = ui->tableWidgetPins->item(row, 3);
                 if (valueItem) {
                     valueItem->setText(valueStr);
+                }
+
+                // Actualizar visualizador del chip
+                if (chipVisualizer) {
+                    chipVisualizer->updatePinState(QString::fromStdString(pinName), visualState);
+                }
+
+                // DEBUG: Primer pin para verificar
+                if (row == 0) {
+                    qDebug() << "[updatePinsTable] Pin" << QString::fromStdString(pinName)
+                             << "= " << valueStr << "-> visualState:" << (int)visualState;
+                }
+            } else {
+                // DEBUG: Si no tiene valor, mostrar
+                if (row == 0) {
+                    qDebug() << "[updatePinsTable] Pin" << QString::fromStdString(pinName)
+                             << "has NO VALUE (std::nullopt)";
                 }
             }
         }
@@ -1555,4 +1569,51 @@ void MainWindow::updateWindowTitle(const QString &filename)
 void MainWindow::updateStatusBar(const QString &message)
 {
     statusBar()->showMessage(message);
+}
+
+// ============================================================================
+// NUEVOS SLOTS PARA THREADING (RECIBEN SEÑALES DEL SCANWORKER)
+// ============================================================================
+
+void MainWindow::onPinsDataReady(std::vector<JTAG::PinLevel> pins)
+{
+    // Este slot se ejecuta en GUI thread (thread-safe vía Qt signals)
+    // Reemplaza el código que estaba en onPollTimer()
+
+    qDebug() << "[MainWindow::onPinsDataReady] Called with" << pins.size() << "pins"
+             << "isCapturing:" << isCapturing;
+
+    // Mostrar en barra de estado que recibimos datos (DEBUG)
+    static int updateCount = 0;
+    updateCount++;
+    statusBar()->showMessage(QString("Updates received: %1 (pins: %2)")
+                            .arg(updateCount).arg(pins.size()), 100);
+
+    if (!scanController || !isCapturing) {
+        qDebug() << "[MainWindow::onPinsDataReady] SKIPPED - not capturing";
+        return;
+    }
+
+    // 1. Actualizar tabla de pines
+    updatePinsTable();
+
+    // 2. Actualizar tabla de watch con detección de transiciones
+    updateWatchTable();
+
+    // 3. Capturar muestra para waveform
+    captureWaveformSample();
+}
+
+void MainWindow::onScanError(QString message)
+{
+    // Mostrar error en status bar
+    statusBar()->showMessage("Scan error: " + message, 5000);
+
+    // Opcional: detener captura automáticamente en caso de error
+    if (isCapturing) {
+        scanController->stopPolling();
+        isCapturing = false;
+        ui->actionRun->setText("Run");
+        updateStatusBar("Stopped due to error");
+    }
 }

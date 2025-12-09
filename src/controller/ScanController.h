@@ -4,16 +4,20 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <QObject>
+#include <QThread>
 
 #include "../core/BoundaryScanEngine.h"
 #include "../bsdl/DeviceModel.h"
 #include "../hal/IJTAGAdapter.h"       // Define AdapterDescriptor
 #include "../hal/factory/AdapterFactory.h"
 #include "../catalog/BSDLCatalog.h"
+#include "ScanWorker.h"
 
 namespace JTAG {
 
-    class ScanController {
+    class ScanController : public QObject {
+        Q_OBJECT
     public:
         ScanController();
         ~ScanController();
@@ -83,11 +87,34 @@ namespace JTAG {
         // NUEVO: Exponer DeviceModel para visualización
         const DeviceModel* getDeviceModel() const { return deviceModel.get(); }
 
+        // Threading control
+        void startPolling();
+        void stopPolling();
+        void setPollInterval(int ms);
+
+        // Thread-safe pin control (marca como dirty sin bloquear)
+        void setPinAsync(const std::string& pinName, PinLevel level);
+
+    signals:
+        // Señales para la GUI (emitidas por el worker, re-emitidas por controller)
+        void pinsDataReady(std::vector<PinLevel> pins);
+        void errorOccurred(QString message);
+
+    private slots:
+        // Slots para recibir señales del worker y re-emitirlas
+        void onPinsUpdated(std::vector<PinLevel> pins);
+        void onWorkerError(QString message);
+
     private:
         std::unique_ptr<IJTAGAdapter> adapter;
         std::unique_ptr<BoundaryScanEngine> engine;
         std::unique_ptr<DeviceModel> deviceModel;
         std::unique_ptr<BSDLCatalog> bsdlCatalog;
+
+        // Threading
+        QThread* workerThread = nullptr;
+        ScanWorker* scanWorker = nullptr;
+        int pollIntervalMs = 100;
 
         uint32_t detectedIDCODE;
         bool initialized;

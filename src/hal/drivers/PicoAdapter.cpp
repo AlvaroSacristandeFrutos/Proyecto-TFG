@@ -3,7 +3,7 @@
 #include <thread>
 #include <chrono>
 
-//ESTÁ STUBBEADO DE MOMENTO
+//ESTï¿½ STUBBEADO DE MOMENTO
 
 namespace JTAG {
 
@@ -15,7 +15,7 @@ namespace JTAG {
     }
 
     bool PicoAdapter::open() {
-        // AQUÍ: Abrir puerto COM real (ej: COM3 o /dev/ttyACM0)
+        // AQUï¿½: Abrir puerto COM real (ej: COM3 o /dev/ttyACM0)
         std::cout << "[PicoAdapter] Opening serial port...\n";
 
         // Simulamos que enviamos un PING para ver si hay una Pico al otro lado
@@ -57,7 +57,7 @@ namespace JTAG {
     }
 
     // --------------------------------------------------------------------------
-    // IMPLEMENTACIÓN CRÍTICA: SHIFT DATA
+    // IMPLEMENTACIï¿½N CRï¿½TICA: SHIFT DATA
     // --------------------------------------------------------------------------
     bool PicoAdapter::shiftData(const std::vector<uint8_t>& tdi,
         std::vector<uint8_t>& tdo,
@@ -83,7 +83,7 @@ namespace JTAG {
         // Datos TDI
         payload.insert(payload.end(), tdi.begin(), tdi.end());
 
-        // 2. Transacción
+        // 2. Transacciï¿½n
         std::vector<uint8_t> response;
         if (!transceivePacket(JtagCommand::CMD_SHIFT_DATA, payload, response)) {
             return false;
@@ -120,7 +120,7 @@ namespace JTAG {
 
     bool PicoAdapter::resetTAP() {
         std::vector<uint8_t> dummy;
-        // Envía comando dedicado RESET
+        // Envï¿½a comando dedicado RESET
         return transceivePacket(JtagCommand::CMD_RESET_TAP, {}, dummy);
     }
 
@@ -134,7 +134,7 @@ namespace JTAG {
         // 1. Construir paquete binario completo usando JtagProtocol.h
         std::vector<uint8_t> packet = buildPacket(cmd, payload);
 
-        // DEBUG: Ver qué estamos enviando
+        // DEBUG: Ver quï¿½ estamos enviando
         /*
         std::cout << "[TX] Cmd: 0x" << std::hex << (int)cmd << " Len: " << payload.size() << std::dec << "\n";
         */
@@ -142,7 +142,7 @@ namespace JTAG {
         // TODO: serial.write(packet);
         // TODO: serial.read(header); -> parse length -> serial.read(payload + crc);
 
-        // --- SIMULACIÓN DE RESPUESTA ---
+        // --- SIMULACIï¿½N DE RESPUESTA ---
         // Simulamos que la Pico responde OK o devuelve datos (Loopback)
         std::this_thread::sleep_for(std::chrono::milliseconds(1)); // Simular latencia USB
 
@@ -159,7 +159,31 @@ namespace JTAG {
             return true;
         }
 
-        return true; // Asumir éxito por defecto
+        return true; // Asumir ï¿½xito por defecto
+    }
+
+    // ========== MÃ‰TODOS DE ALTO NIVEL (transaccionales) - STUBS ==========
+    // NOTA: Estos mÃ©todos requieren firmware funcional en el Pico
+    // Por ahora lanzan excepciÃ³n para indicar que no estÃ¡n implementados
+
+    bool PicoAdapter::scanIR(uint8_t irLength, const std::vector<uint8_t>& dataIn,
+                             std::vector<uint8_t>& dataOut) {
+        std::cerr << "[PicoAdapter] ERROR: scanIR() requires firmware - NOT IMPLEMENTED\n";
+        throw std::runtime_error("PicoAdapter::scanIR() requires firmware - NOT IMPLEMENTED");
+        return false;
+    }
+
+    bool PicoAdapter::scanDR(size_t drLength, const std::vector<uint8_t>& dataIn,
+                             std::vector<uint8_t>& dataOut) {
+        std::cerr << "[PicoAdapter] ERROR: scanDR() requires firmware - NOT IMPLEMENTED\n";
+        throw std::runtime_error("PicoAdapter::scanDR() requires firmware - NOT IMPLEMENTED");
+        return false;
+    }
+
+    uint32_t PicoAdapter::readIDCODE() {
+        std::cerr << "[PicoAdapter] ERROR: readIDCODE() requires firmware - NOT IMPLEMENTED\n";
+        throw std::runtime_error("PicoAdapter::readIDCODE() requires firmware - NOT IMPLEMENTED");
+        return 0;
     }
 
 } // namespace JTAG

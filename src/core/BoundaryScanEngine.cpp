@@ -95,43 +95,37 @@ namespace JTAG {
         std::cout << "BoundaryScanEngine::loadInstruction(0x" << std::hex << instruction
             << std::dec << ", " << irLength << " bits)\n";
 
-        if (!gotoState(TAPState::SHIFT_IR)) return false;
-
+        // Preparar datos de entrada
         size_t numBytes = (irLength + 7) / 8;
-        std::vector<uint8_t> tdi(numBytes, 0);
-        std::vector<uint8_t> tdo;
+        std::vector<uint8_t> dataIn(numBytes, 0);
 
         for (size_t i = 0; i < numBytes; i++) {
-            tdi[i] = (instruction >> (i * 8)) & 0xFF;
+            dataIn[i] = (instruction >> (i * 8)) & 0xFF;
         }
 
-        if (!adapter->shiftData(tdi, tdo, irLength, true)) return false; // Exit1-IR
+        // Usar método transaccional de alto nivel
+        // El adapter maneja toda la navegación TAP internamente
+        std::vector<uint8_t> dataOut;
+        if (!adapter->scanIR(static_cast<uint8_t>(irLength), dataIn, dataOut)) {
+            std::cerr << "BoundaryScanEngine::loadInstruction() - scanIR failed\n";
+            return false;
+        }
 
-        currentState = TAPState::EXIT1_IR;
-        if (!gotoState(TAPState::UPDATE_IR)) return false;
-        if (!gotoState(TAPState::RUN_TEST_IDLE)) return false;
-
+        // El adapter nos deja en Run-Test/Idle después de scanIR
+        currentState = TAPState::RUN_TEST_IDLE;
         return true;
     }
 
     uint32_t BoundaryScanEngine::readIDCODE() {
         std::cout << "BoundaryScanEngine::readIDCODE()\n";
 
-        if (!reset()) return 0;
-        if (!gotoState(TAPState::SHIFT_DR)) return 0;
+        // Usar método transaccional de alto nivel
+        // El adapter maneja reset TAP, navegación, lectura y retorno a Idle
+        uint32_t idcode = adapter->readIDCODE();
 
-        std::vector<uint8_t> tdi(4, 0xFF);
-        std::vector<uint8_t> tdo;
+        // El adapter nos deja en Run-Test/Idle después de readIDCODE
+        currentState = TAPState::RUN_TEST_IDLE;
 
-        if (!adapter->shiftData(tdi, tdo, 32, true)) return 0; // Exit1-DR
-
-        currentState = TAPState::EXIT1_DR;
-        gotoState(TAPState::RUN_TEST_IDLE);
-
-        uint32_t idcode = 0;
-        for (size_t i = 0; i < 4; i++) {
-            idcode |= (static_cast<uint32_t>(tdo[i]) << (i * 8));
-        }
         return idcode;
     }
 
@@ -174,28 +168,36 @@ namespace JTAG {
 
     bool BoundaryScanEngine::applyChanges() {
         if (bsrLength == 0) return false;
-        if (!gotoState(TAPState::SHIFT_DR)) return false;
 
-        std::vector<uint8_t> tdo;
-        if (!adapter->shiftData(bsr, tdo, bsrLength, true)) return false;
+        // Usar método transaccional de alto nivel
+        // El adapter maneja toda la navegación TAP internamente
+        std::vector<uint8_t> dataOut;
+        if (!adapter->scanDR(bsrLength, bsr, dataOut)) {
+            std::cerr << "BoundaryScanEngine::applyChanges() - scanDR failed\n";
+            return false;
+        }
 
-        currentState = TAPState::EXIT1_DR;
-        if (!gotoState(TAPState::UPDATE_DR)) return false;
-        if (!gotoState(TAPState::RUN_TEST_IDLE)) return false;
+        // El adapter nos deja en Run-Test/Idle después de scanDR
+        currentState = TAPState::RUN_TEST_IDLE;
         return true;
     }
 
     bool BoundaryScanEngine::samplePins() {
         if (bsrLength == 0) return false;
-        if (!gotoState(TAPState::SHIFT_DR)) return false;
 
-        std::vector<uint8_t> tdo;
-        if (!adapter->shiftData(bsr, tdo, bsrLength, true)) return false;
+        // Usar método transaccional de alto nivel
+        // El adapter maneja toda la navegación TAP internamente
+        std::vector<uint8_t> dataOut;
+        if (!adapter->scanDR(bsrLength, bsr, dataOut)) {
+            std::cerr << "BoundaryScanEngine::samplePins() - scanDR failed\n";
+            return false;
+        }
 
-        bsr = tdo;
-        currentState = TAPState::EXIT1_DR;
-        if (!gotoState(TAPState::UPDATE_DR)) return false;
-        if (!gotoState(TAPState::RUN_TEST_IDLE)) return false;
+        // Actualizar BSR con los datos leídos
+        bsr = dataOut;
+
+        // El adapter nos deja en Run-Test/Idle después de scanDR
+        currentState = TAPState::RUN_TEST_IDLE;
         return true;
     }
 

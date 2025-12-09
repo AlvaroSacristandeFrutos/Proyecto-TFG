@@ -4,7 +4,7 @@
 #include <vector>
 #include <string>
 
-// --- CONFIGURACIÓN DE PLATAFORMA ---
+// --- CONFIGURACIï¿½N DE PLATAFORMA ---
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -25,7 +25,7 @@ namespace JTAG {
         JLinkAdapter();
         ~JLinkAdapter() override;
 
-        // --- Implementación IJTAGAdapter ---
+        // --- Implementaciï¿½n IJTAGAdapter ---
         bool open() override;
         void close() override;
         bool isConnected() const override;
@@ -38,13 +38,20 @@ namespace JTAG {
         bool writeTMS(const std::vector<bool>& tmsSequence) override;
         bool resetTAP() override;
 
+        // MÃ©todos de alto nivel (transaccionales)
+        bool scanIR(uint8_t irLength, const std::vector<uint8_t>& dataIn,
+                    std::vector<uint8_t>& dataOut) override;
+        bool scanDR(size_t drLength, const std::vector<uint8_t>& dataIn,
+                    std::vector<uint8_t>& dataOut) override;
+        uint32_t readIDCODE() override;
+
         // Info
         std::string getName() const override { return "SEGGER J-Link"; }
         uint32_t getClockSpeed() const override { return currentSpeed; }
         bool setClockSpeed(uint32_t speedHz) override;
         std::string getInfo() const override;
 
-        // Método estático para detección
+        // Mï¿½todo estï¿½tico para detecciï¿½n
         static bool isLibraryAvailable();
 
     private:

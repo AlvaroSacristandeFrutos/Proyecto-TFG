@@ -6,13 +6,13 @@
 #include <QGraphicsView>
 #include <QComboBox>
 #include <QLabel>
-#include <QTimer>
 #include <QActionGroup>
 #include <QElapsedTimer>
 #include <memory>
 #include <deque>
 #include <map>
 #include <string>
+#include <vector>
 
 #include "ChipVisualizer.h"
 
@@ -115,8 +115,9 @@ private slots:
     void onWaveNext();
     void onWaveGoto();
 
-    // Timer for polling backend
-    void onPollTimer();
+    // NUEVOS slots para recibir datos del worker
+    void onPinsDataReady(std::vector<JTAG::PinLevel> pins);
+    void onScanError(QString message);
 
 private:
     Ui::MainWindow *ui;
@@ -132,13 +133,10 @@ private:
     
     // Toolbar widgets
     QComboBox *zoomComboBox;
-    
+
     // Action group for IN/OUT of inout radio buttons
     QActionGroup *inoutActionGroup;
-    
-    // Polling timer for updating pin states
-    QTimer *pollTimer;
-    
+
     // Current zoom level
     double currentZoom;
     

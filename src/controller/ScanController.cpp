@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <memory>
+#include <QDebug>
 
 namespace JTAG {
 
@@ -13,13 +14,15 @@ namespace JTAG {
     // ============================================================================
 
     ScanController::ScanController()
-        : adapter(nullptr)
+        : QObject(nullptr)
+        , adapter(nullptr)
         , engine(nullptr)
         , deviceModel(nullptr)
         , bsdlCatalog(std::make_unique<BSDLCatalog>())
         , detectedIDCODE(0)
         , initialized(false)
     {
+        workerThread = new QThread(this);
         // std::cout << "ScanController created\n";
     }
 
@@ -137,6 +140,20 @@ namespace JTAG {
 
         engine->loadInstruction(deviceModel->getInstruction("EXTEST"));
 
+        // Hacer un sample adicional para tener valores iniciales en el BSR
+        engine->samplePins();
+
+        // Crear worker y moverlo al thread
+        scanWorker = new ScanWorker(engine.get());
+        scanWorker->moveToThread(workerThread);
+
+        // Conectar señales
+        connect(workerThread, &QThread::started, scanWorker, &ScanWorker::run);
+        connect(scanWorker, &ScanWorker::pinsUpdated,
+                this, &ScanController::onPinsUpdated);
+        connect(scanWorker, &ScanWorker::errorOccurred,
+                this, &ScanController::onWorkerError);
+
         initialized = true;
         return true;
     }
@@ -164,14 +181,32 @@ namespace JTAG {
     }
 
     std::optional<PinLevel> ScanController::getPin(const std::string& pinName) const {
-        if (!deviceModel || !engine) return std::nullopt;
+        if (!deviceModel || !engine) {
+            qDebug() << "[ScanController::getPin] ERROR: deviceModel or engine is NULL";
+            return std::nullopt;
+        }
 
         auto pinInfo = deviceModel->getPinInfo(pinName);
-        if (!pinInfo) return std::nullopt;
+        if (!pinInfo) {
+            qDebug() << "[ScanController::getPin] ERROR: No pinInfo for" << QString::fromStdString(pinName);
+            return std::nullopt;
+        }
+
+        // DEBUG: Primera vez, mostrar info de la celda
+        static bool firstTime = true;
+        if (firstTime && pinName == "IO_LED0") {
+            qDebug() << "[ScanController::getPin] Pin IO_LED0: inputCell=" << pinInfo->inputCell
+                     << ", outputCell=" << pinInfo->outputCell;
+            firstTime = false;
+        }
 
         if (pinInfo->inputCell != -1) {
-            return engine->getPin(pinInfo->inputCell);
+            auto level = engine->getPin(pinInfo->inputCell);
+            return level;
         }
+
+        qDebug() << "[ScanController::getPin] WARNING: Pin" << QString::fromStdString(pinName)
+                 << "has inputCell = -1";
         return std::nullopt;
     }
 
@@ -315,6 +350,61 @@ namespace JTAG {
 
     std::string ScanController::getPinNumber(const std::string& pinName) const {
         return deviceModel ? deviceModel->getPinNumber(pinName) : "";
+    }
+
+    // ============================================================================
+    // THREADING CONTROL
+    // ============================================================================
+
+    void ScanController::startPolling() {
+        qDebug() << "[ScanController::startPolling] Called";
+        if (scanWorker && !workerThread->isRunning()) {
+            qDebug() << "[ScanController::startPolling] Starting worker thread";
+            scanWorker->start();
+            workerThread->start();
+        } else {
+            qDebug() << "[ScanController::startPolling] SKIPPED - worker:" << (scanWorker != nullptr)
+                     << "running:" << (workerThread ? workerThread->isRunning() : false);
+        }
+    }
+
+    void ScanController::stopPolling() {
+        if (scanWorker) {
+            scanWorker->stop();
+            workerThread->quit();
+            workerThread->wait();
+        }
+    }
+
+    void ScanController::setPollInterval(int ms) {
+        pollIntervalMs = ms;
+        if (scanWorker) {
+            scanWorker->setPollInterval(ms);
+        }
+    }
+
+    void ScanController::setPinAsync(const std::string& pinName, PinLevel level) {
+        if (!deviceModel || !scanWorker) return;
+
+        auto pinInfo = deviceModel->getPinInfo(pinName);
+        if (pinInfo && pinInfo->outputCell >= 0) {
+            scanWorker->markDirtyPin(pinInfo->outputCell, level);
+        }
+    }
+
+    // Slot para recibir datos del worker
+    void ScanController::onPinsUpdated(std::vector<PinLevel> pins) {
+        qDebug() << "[ScanController::onPinsUpdated] Received" << pins.size() << "pins from worker";
+        // Actualizar cache local si es necesario
+        // Reemitir señal para la GUI (esto hace que MainWindow la reciba)
+        emit pinsDataReady(pins);
+        qDebug() << "[ScanController::onPinsUpdated] Signal pinsDataReady emitted";
+    }
+
+    void ScanController::onWorkerError(QString message) {
+        qWarning() << "Worker error:" << message;
+        // Reemitir error para la GUI
+        emit errorOccurred(message);
     }
 
 } // namespace JTAG

@@ -27,7 +27,7 @@ namespace JTAG {
     public:
         virtual ~IJTAGAdapter() = default;
 
-        // Operaciones JTAG
+        // ========== PRIMITIVAS DE BAJO NIVEL (mantener por compatibilidad) ==========
         virtual bool shiftData(const std::vector<uint8_t>& tdi,
             std::vector<uint8_t>& tdo,
             size_t numBits,
@@ -36,7 +36,25 @@ namespace JTAG {
         virtual bool writeTMS(const std::vector<bool>& tmsSequence) = 0;
         virtual bool resetTAP() = 0;
 
-        // Gestión
+        // ========== PRIMITIVAS DE ALTO NIVEL (transaccionales) ==========
+
+        // Cargar instrucción en IR
+        // - Navega automáticamente: Current → Shift-IR → Update-IR → Run-Test/Idle
+        // - Maneja TMS transitions internamente
+        virtual bool scanIR(uint8_t irLength, const std::vector<uint8_t>& dataIn,
+                            std::vector<uint8_t>& dataOut) = 0;
+
+        // Intercambiar datos con DR
+        // - Navega automáticamente: Current → Shift-DR → Update-DR → Run-Test/Idle
+        // - Maneja TMS transitions internamente
+        virtual bool scanDR(size_t drLength, const std::vector<uint8_t>& dataIn,
+                            std::vector<uint8_t>& dataOut) = 0;
+
+        // Leer IDCODE (operación atómica optimizada)
+        // - Reset → Shift-DR (IDCODE auto-loaded) → captura 32 bits → Run-Test/Idle
+        virtual uint32_t readIDCODE() = 0;
+
+        // ========== MÉTODOS DE GESTIÓN (sin cambios) ==========
         virtual bool open() = 0;
         virtual void close() = 0;
         virtual bool isConnected() const = 0;
