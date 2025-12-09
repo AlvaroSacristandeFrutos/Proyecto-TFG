@@ -150,6 +150,12 @@ void MainWindow::setupTables()
     ui->tableWidgetWatch->setColumnWidth(4, 140);  // Transitions Count
     ui->tableWidgetWatch->setColumnWidth(5, 80);   // Type
 
+    // Conectar señales de tabla de pines
+    connect(ui->tableWidgetPins, &QTableWidget::itemChanged,
+            this, &MainWindow::onPinTableItemChanged);
+    connect(ui->tableWidgetPins->selectionModel(), &QItemSelectionModel::selectionChanged,
+            this, &MainWindow::onPinTableSelectionChanged);
+
     // Setup Waveform table
     ui->tableWidgetWaveform->setColumnCount(5);
     ui->tableWidgetWaveform->setHorizontalHeaderLabels(
@@ -673,6 +679,22 @@ void MainWindow::onSearchPinsButton()
     updateStatusBar(QString("Found %1 pin(s) matching '%2'").arg(visibleCount).arg(searchText));
 }
 
+void MainWindow::onPinTableItemChanged(QTableWidgetItem* item)
+{
+    // Solo procesar cambios en la columna 0 (Name)
+    if (item->column() != 0) return;
+
+    QString newDisplayName = item->text();
+    QString realName = item->data(Qt::UserRole).toString();
+
+    qDebug() << "[onPinTableItemChanged] Pin display name changed to:" << newDisplayName
+             << "(real name:" << realName << ")";
+
+    // El cambio de nombre ya está hecho en el item
+    // resolveRealPinName() usará el UserRole automáticamente
+    // No necesitamos hacer nada más
+}
+
 void MainWindow::onPinTableSelectionChanged()
 {
     // Obtener fila seleccionada
@@ -687,8 +709,13 @@ void MainWindow::onPinTableSelectionChanged()
     QTableWidgetItem* nameItem = ui->tableWidgetPins->item(row, 0);
     if (!nameItem) return;
 
-    QString pinName = nameItem->text();
-    chipVisualizer->highlightPin(pinName);
+    // Usar el nombre REAL para el visualizador (guardado en UserRole)
+    QString realPinName = nameItem->data(Qt::UserRole).toString();
+    if (realPinName.isEmpty()) {
+        realPinName = nameItem->text(); // Fallback al nombre de display
+    }
+
+    chipVisualizer->highlightPin(realPinName);
 }
 
 void MainWindow::onEditPinNamesAndBuses()
@@ -1311,39 +1338,51 @@ void MainWindow::updatePinsTable()
     std::vector<std::string> pinNames = scanController->getPinList();
     qDebug() << "[MainWindow::updatePinsTable] Updating" << pinNames.size() << "pins";
 
-    // CAMBIO: Limpiar tabla antes de llenar (permite recargar BSDL)
-    ui->tableWidgetPins->setRowCount(0);
+    // NOTA: NO limpiar la tabla si ya tiene filas con nombres editados
+    // Solo limpiar si es la primera carga (tabla vacía)
+    bool isFirstLoad = (ui->tableWidgetPins->rowCount() == 0);
 
-    // Llenar tabla con información completa
-    for (const auto& pinName : pinNames) {
-        int row = ui->tableWidgetPins->rowCount();
-        ui->tableWidgetPins->insertRow(row);
+    if (isFirstLoad) {
+        ui->tableWidgetPins->setRowCount(0);
 
-        // Columna 0: Name
-        ui->tableWidgetPins->setItem(row, 0,
-            new QTableWidgetItem(QString::fromStdString(pinName)));
+        // Llenar tabla con información completa
+        for (const auto& pinName : pinNames) {
+            int row = ui->tableWidgetPins->rowCount();
+            ui->tableWidgetPins->insertRow(row);
 
-        // Columna 1: Pin #
-        QString pinNumStr = QString::fromStdString(scanController->getPinNumber(pinName));
-        ui->tableWidgetPins->setItem(row, 1, new QTableWidgetItem(pinNumStr));
+            QString qPinName = QString::fromStdString(pinName);
 
-        // Columna 2: Port
-        QString port = QString::fromStdString(scanController->getPinPort(pinName));
-        ui->tableWidgetPins->setItem(row, 2, new QTableWidgetItem(port));
+            // Columna 0: Name (editable por el usuario)
+            QTableWidgetItem* nameItem = new QTableWidgetItem(qPinName);
+            // Guardar el nombre REAL del pin en UserRole (no visible, no editable)
+            nameItem->setData(Qt::UserRole, qPinName);
+            ui->tableWidgetPins->setItem(row, 0, nameItem);
 
-        // Columna 3: I/O Value (se actualizará con polling)
-        ui->tableWidgetPins->setItem(row, 3, new QTableWidgetItem("?"));
+            // Columna 1: Pin #
+            QString pinNumStr = QString::fromStdString(scanController->getPinNumber(pinName));
+            ui->tableWidgetPins->setItem(row, 1, new QTableWidgetItem(pinNumStr));
 
-        // Columna 4: Type
-        QString type = QString::fromStdString(scanController->getPinType(pinName));
-        ui->tableWidgetPins->setItem(row, 4, new QTableWidgetItem(type));
+            // Columna 2: Port
+            QString port = QString::fromStdString(scanController->getPinPort(pinName));
+            ui->tableWidgetPins->setItem(row, 2, new QTableWidgetItem(port));
+
+            // Columna 3: I/O Value (se actualizará con polling)
+            ui->tableWidgetPins->setItem(row, 3, new QTableWidgetItem("?"));
+
+            // Columna 4: Type
+            QString type = QString::fromStdString(scanController->getPinType(pinName));
+            ui->tableWidgetPins->setItem(row, 4, new QTableWidgetItem(type));
+        }
     }
 
     // Actualizar valores I/O en tabla Y en visualizador
     for (int row = 0; row < ui->tableWidgetPins->rowCount(); row++) {
         QTableWidgetItem *nameItem = ui->tableWidgetPins->item(row, 0);
         if (nameItem) {
-            std::string pinName = nameItem->text().toStdString();
+            QString displayName = nameItem->text();
+            QString realName = resolveRealPinName(displayName);
+            std::string pinName = realName.toStdString();
+
             auto level = scanController->getPin(pinName);
 
             if (level.has_value()) {
@@ -1371,9 +1410,9 @@ void MainWindow::updatePinsTable()
                     valueItem->setText(valueStr);
                 }
 
-                // Actualizar visualizador del chip
+                // Actualizar visualizador del chip (usar nombre real para el mapa interno)
                 if (chipVisualizer) {
-                    chipVisualizer->updatePinState(QString::fromStdString(pinName), visualState);
+                    chipVisualizer->updatePinState(realName, visualState);
                 }
 
                 // DEBUG: Primer pin para verificar
@@ -1391,6 +1430,22 @@ void MainWindow::updatePinsTable()
         }
     }
     // ================================================================
+}
+
+QString MainWindow::resolveRealPinName(const QString& displayName) const
+{
+    // Buscar en la tabla el item con este displayName
+    // y obtener el nombre real desde UserRole
+    for (int row = 0; row < ui->tableWidgetPins->rowCount(); row++) {
+        QTableWidgetItem* nameItem = ui->tableWidgetPins->item(row, 0);
+        if (nameItem && nameItem->text() == displayName) {
+            // El nombre real está guardado en UserRole
+            QString realName = nameItem->data(Qt::UserRole).toString();
+            return realName.isEmpty() ? displayName : realName;
+        }
+    }
+    // Si no se encuentra, asumir que displayName es el nombre real
+    return displayName;
 }
 
 void MainWindow::renderChipVisualization()

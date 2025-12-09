@@ -8,6 +8,7 @@
 #include <QLabel>
 #include <QActionGroup>
 #include <QElapsedTimer>
+#include <QTableWidgetItem>
 #include <memory>
 #include <deque>
 #include <map>
@@ -106,6 +107,7 @@ private slots:
     void onDeviceChanged(int index);
     void onSearchPinsButton();
     void onPinTableSelectionChanged();  // NEW: Highlight pin in visualizer
+    void onPinTableItemChanged(QTableWidgetItem* item);  // NEW: Handle pin name changes
 
     // Waveform toolbar actions (internal waveform controls)
     void onWaveZoomIn();
@@ -171,7 +173,7 @@ private:
     void initializeUI();
     void updateWindowTitle(const QString &filename = QString());
     void updateStatusBar(const QString &message);
-    
+
     // Backend integration helpers
     void updatePinsTable();
     void updateWatchTable();
@@ -179,6 +181,9 @@ private:
     void redrawWaveform();
     void enableControlsAfterConnection(bool enable);
     void renderChipVisualization();
+
+    // Pin name resolution helper
+    QString resolveRealPinName(const QString& displayName) const;
 };
 
 #endif // MAINWINDOW_H
