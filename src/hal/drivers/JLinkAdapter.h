@@ -77,6 +77,9 @@ namespace JTAG {
         bool loadLibrary();
         void unloadLibrary();
         void* getSymbol(const char* name);
+
+        // Helper para búsqueda recursiva de DLL
+        static std::string findJLinkDLL();
     };
 
 } // namespace JTAG

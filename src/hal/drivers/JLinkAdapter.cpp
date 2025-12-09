@@ -2,6 +2,10 @@
 #include <iostream>
 #include <vector>
 #include <cstring>
+#include <filesystem>
+#include <algorithm>
+
+namespace fs = std::filesystem;
 
 namespace JTAG {
 
@@ -23,14 +27,91 @@ namespace JTAG {
         close();
     }
 
+    // Función helper para buscar recursivamente la DLL de J-Link
+    std::string JLinkAdapter::findJLinkDLL() {
+#if defined(_WIN32)
+        // 1. PRIORIDAD ALTA: Buscar recursivamente en directorio SEGGER
+        std::string seggerPath = "C:\\Program Files\\SEGGER";
+        std::cout << "[JLink] Searching recursively in: " << seggerPath << "\n";
+
+        std::vector<std::string> foundDLLs;
+
+        try {
+            if (fs::exists(seggerPath) && fs::is_directory(seggerPath)) {
+                for (const auto& entry : fs::recursive_directory_iterator(seggerPath, fs::directory_options::skip_permission_denied)) {
+                    if (entry.is_regular_file()) {
+                        std::string filename = entry.path().filename().string();
+                        if (filename == "JLink_x64.dll" || filename == "JLinkARM.dll") {
+                            foundDLLs.push_back(entry.path().string());
+                        }
+                    }
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[JLink] Error searching SEGGER directory: " << e.what() << "\n";
+        }
+
+        // Priorizar: 1) JLink_x64.dll, 2) Versiones más recientes (V890 > V884)
+        if (!foundDLLs.empty()) {
+            std::cout << "[JLink] Found " << foundDLLs.size() << " DLLs:\n";
+            for (const auto& dll : foundDLLs) {
+                std::cout << "[JLink]   - " << dll << "\n";
+            }
+
+            // Ordenar: primero x64, luego versiones más altas
+            std::sort(foundDLLs.begin(), foundDLLs.end(), [](const std::string& a, const std::string& b) {
+                bool aIs64 = a.find("JLink_x64.dll") != std::string::npos;
+                bool bIs64 = b.find("JLink_x64.dll") != std::string::npos;
+                if (aIs64 != bIs64) return aIs64; // x64 primero
+                return a > b; // Versión más alta (alfabéticamente: V890 > V884)
+            });
+
+            std::string bestDLL = foundDLLs[0];
+            std::cout << "[JLink] Selected DLL: " << bestDLL << "\n";
+            return bestDLL;
+        }
+
+        // 2. FALLBACK: Buscar en otras ubicaciones comunes
+        std::cout << "[JLink] DLL not found in SEGGER, trying fallback locations...\n";
+        const char* fallbackPaths[] = {
+            "C:\\Program Files (x86)\\SEGGER\\JLink\\JLink_x64.dll",
+            "C:\\Program Files\\SEGGER\\JLink\\JLink_x64.dll"
+        };
+
+        for (const char* path : fallbackPaths) {
+            if (fs::exists(path)) {
+                std::cout << "[JLink] Found DLL at fallback: " << path << "\n";
+                return std::string(path);
+            }
+        }
+
+        std::cout << "[JLink] DLL not found in any location\n";
+#endif
+        return ""; // No encontrada
+    }
+
     // Método estático para verificar si la DLL existe en el sistema
     bool JLinkAdapter::isLibraryAvailable() {
 #if defined(_WIN32)
+        // Intentar cargar desde PATH primero
         HMODULE h = LoadLibraryA(JLINK_LIB_NAME);
         if (h) {
             FreeLibrary(h);
+            std::cout << "[JLink] DLL found in PATH: " << JLINK_LIB_NAME << "\n";
             return true;
         }
+
+        // Si no está en PATH, buscar recursivamente
+        std::string dllPath = findJLinkDLL();
+        if (!dllPath.empty()) {
+            h = LoadLibraryA(dllPath.c_str());
+            if (h) {
+                FreeLibrary(h);
+                return true;
+            }
+        }
+
+        std::cout << "[JLink] DLL not available\n";
 #else
         void* h = dlopen(JLINK_LIB_NAME, RTLD_LAZY);
         if (h) {
@@ -45,13 +126,27 @@ namespace JTAG {
         if (libHandle) return true;
 
 #if defined(_WIN32)
+        // Intentar cargar desde PATH primero
         libHandle = LoadLibraryA(JLINK_LIB_NAME);
+
+        if (!libHandle) {
+            // Si no está en PATH, buscar recursivamente
+            std::string dllPath = findJLinkDLL();
+            if (!dllPath.empty()) {
+                libHandle = LoadLibraryA(dllPath.c_str());
+                if (libHandle) {
+                    std::cout << "[JLink] Loaded DLL from: " << dllPath << "\n";
+                }
+            }
+        } else {
+            std::cout << "[JLink] Loaded DLL from PATH: " << JLINK_LIB_NAME << "\n";
+        }
 #else
         libHandle = dlopen(JLINK_LIB_NAME, RTLD_NOW);
 #endif
 
         if (!libHandle) {
-            // No imprimimos error aquí para no ensuciar si solo estamos detectando
+            std::cerr << "[JLink] Error: Could not load DLL from any location\n";
             return false;
         }
 
