@@ -14,17 +14,17 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
-    # 1. Instalar Qt 6.7.3 (Con tu arquitectura y el modulo SerialPort)
+    # 1. Instalar Qt 6.7.3
+    # NOTA: Usamos 'win64_msvc2019_64' porque es el nombre oficial del artefacto en Qt.
+    # Es 100% compatible con Visual Studio 2022.
     - name: Install Qt
       uses: jurplel/install-qt-action@v3
       with:
         version: '6.7.3'
         host: 'windows'
         target: 'desktop'
-        # CAMBIO 1: Arquitectura específica que has pedido
-        arch: 'win64_msvc2022_64'
-        # CAMBIO 2: Añadir el módulo que daba error (SerialPort)
-        modules: 'qtserialport'
+        arch: 'win64_msvc2019_64'  # <-- ESTO DEBE SER 2019 PARA QUE DESCARGUE
+        modules: 'qtserialport'    # <-- Mantenemos el módulo necesario
         cache: 'true'
 
     # 2. Configurar CMake en DEBUG
@@ -38,7 +38,6 @@ jobs:
     # 4. Añadir DLLs (Windeployqt)
     - name: Añadir DLLs (Windeployqt)
       shell: cmd
-      # Buscamos los .exe y le aplicamos las librerías
       run: for /r build %%i in (*.exe) do windeployqt --debug --compiler-runtime --no-translations "%%i"
 
     # 5. Subir Todo (Exe + DLLs)
