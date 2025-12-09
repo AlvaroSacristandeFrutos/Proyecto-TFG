@@ -1,6 +1,9 @@
 name: Build Windows Debug
 
 on:
+name: Build Windows Debug
+
+on:
   push:
     branches: [ "main" ]
   pull_request:
@@ -14,7 +17,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
-    # 1. Instalamos Qt 6.7.3
+    # 1. Instalar Qt 6.7.3
     - name: Install Qt
       uses: jurplel/install-qt-action@v3
       with:
@@ -24,31 +27,25 @@ jobs:
         arch: 'win64_msvc2019_64'
         cache: 'true'
 
-    # 2. Configuramos CMake en DEBUG
+    # 2. Configurar CMake en DEBUG
     - name: Configurar CMake
       run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
 
-    # 3. Compilamos en DEBUG
+    # 3. Compilar en DEBUG
     - name: Compilar
       run: cmake --build build --config Debug
 
-    # ====================================================
-    # PASO CLAVE: Windeployqt con BUCLE Y ASTERISCOS (*)
-    # ====================================================
+    # 4. Añadir DLLs (Windeployqt)
+    # Busca cualquier .exe en la carpeta build y le pega las librerías
     - name: Añadir DLLs (Windeployqt)
       shell: cmd
-      # Este comando recorre toda la carpeta 'build' buscando cualquier .exe
-      # y le aplica las librerías de Qt (versión Debug)
       run: for /r build %%i in (*.exe) do windeployqt --debug --compiler-runtime --no-translations "%%i"
 
-    # ====================================================
-    # PASO DE SUBIDA: Usando Wildcards (**)
-    # ====================================================
+    # 5. Subir Todo (Exe + DLLs)
     - name: Subir Todo (Exe + DLLs)
       uses: actions/upload-artifact@v4
       with:
         name: JtagScanner-Debug
-        # Aquí usamos los asteriscos dobles (**) para buscar en cualquier subcarpeta
         path: |
           build/**/*.exe
           build/**/*.dll
