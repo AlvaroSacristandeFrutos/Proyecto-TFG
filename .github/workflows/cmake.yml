@@ -1,9 +1,6 @@
 name: Build Windows Debug
 
 on:
-name: Build Windows Debug
-
-on:
   push:
     branches: [ "main" ]
   pull_request:
@@ -36,7 +33,6 @@ jobs:
       run: cmake --build build --config Debug
 
     # 4. Añadir DLLs (Windeployqt)
-    # Busca cualquier .exe en la carpeta build y le pega las librerías
     - name: Añadir DLLs (Windeployqt)
       shell: cmd
       run: for /r build %%i in (*.exe) do windeployqt --debug --compiler-runtime --no-translations "%%i"
