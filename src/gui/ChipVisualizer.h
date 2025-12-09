@@ -132,6 +132,12 @@ private:
     QMap<QString, PinGraphicsItem*> m_pins;
     QString m_packageType;
 
+    enum class LayoutMode {
+        CENTER_GRID,  // BGA (actual)
+        EDGE_PINS     // TQFP (nuevo)
+    };
+    LayoutMode m_layoutMode = LayoutMode::CENTER_GRID;
+
     // Layout constants
     static constexpr int CHIP_WIDTH = 400;
     static constexpr int CHIP_HEIGHT = 400;

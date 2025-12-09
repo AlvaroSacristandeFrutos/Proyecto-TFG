@@ -14,6 +14,9 @@
 // IMPORTANTE: Descomenta estas líneas cuando integres el backend
 #include "../controller/ScanController.h"
 #include "../hal/JtagProtocol.h"  // Para PinLevel enum
+#include "ConnectionDialog.h"
+#include "ChainExamineDialog.h"
+#include "NewProjectWizard.h"
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -309,7 +312,25 @@ void MainWindow::enableControlsAfterConnection(bool enable)
 
 void MainWindow::onNewProjectWizard()
 {
-    QMessageBox::information(this, "New Project", "New Project Wizard - To be implemented");
+    if (isDeviceDetected && scanController) {
+        uint32_t idcode = scanController->getIDCODE();
+
+        NewProjectWizard wizard(idcode, this);
+        if (wizard.exec() == QDialog::Accepted) {
+            auto packageType = wizard.getPackageType();
+
+            if (packageType == PackageTypePage::PackageType::EDGE_PINS) {
+                chipVisualizer->setPackageType("EDGE");
+            } else {
+                chipVisualizer->setPackageType("CENTER");
+            }
+
+            updateStatusBar("Project settings updated");
+        }
+    } else {
+        QMessageBox::information(this, "New Project Wizard",
+            "Please detect a device first (Scan > Examine Chain)");
+    }
 }
 
 void MainWindow::onOpen()
@@ -388,147 +409,87 @@ void MainWindow::onInoutPinsDisplaying(bool isIN)
 
 void MainWindow::onJTAGConnection()
 {
-    // ==================== PUNTO DE INTEGRACIÓN 2 ====================
     if (!scanController) {
         QMessageBox::critical(this, "Error", "ScanController not initialized");
         return;
     }
 
-    // 1. Obtener lista de adaptadores detectados
+    // 1. Detectar adaptadores disponibles REALMENTE
     auto adapters = scanController->getDetectedAdapters();
 
-    // DEBUG: Verificar qué se detectó
     if (adapters.empty()) {
         QMessageBox::warning(this, "No Adapters",
-            "No adapters detected. MockAdapter should always be available.\n\n"
-            "This might be a configuration issue.");
+            "No JTAG adapters detected.\n\n"
+            "Please ensure:\n"
+            "- J-Link DLL is installed (for J-Link)\n"
+            "- Pico is connected via USB (for Pico)");
         return;
     }
 
-    // 2. Mostrar diálogo para que usuario elija
-    QStringList adapterNames;
-    for (const auto& adapter : adapters) {
-        adapterNames << QString::fromStdString(adapter.name);
-    }
+    // 2. Mostrar diálogo MEJORADO con lista + frecuencia
+    ConnectionDialog dialog(adapters, this);
 
-    // DEBUG: Mostrar cuántos adaptadores se encontraron
-    updateStatusBar(QString("Found %1 adapter(s)").arg(adapters.size()));
+    if (dialog.exec() == QDialog::Accepted) {
+        JTAG::AdapterType selectedType = dialog.getSelectedAdapter();
+        uint32_t clockSpeed = dialog.getSelectedClockSpeed();
 
-    bool ok;
-    QString selected = QInputDialog::getItem(this, "Select JTAG Adapter",
-                                             "Available adapters:", adapterNames, 0, false, &ok);
-
-    if (ok && !selected.isEmpty()) {
-        // 3. Encontrar el tipo de adaptador seleccionado
-        JTAG::AdapterType selectedType;
-        bool found = false;
-        for (const auto& adapter : adapters) {
-            if (QString::fromStdString(adapter.name) == selected) {
-                selectedType = adapter.type;
-                found = true;
-                break;
-            }
-        }
-
-        if (!found) {
-            QMessageBox::critical(this, "Error", "Selected adapter not found");
-            return;
-        }
-
-        // 4. Conectar
-        if (scanController->connectAdapter(selectedType, 1000000)) {
+        // 3. Conectar (SIN auto-detección)
+        if (scanController->connectAdapter(selectedType, clockSpeed)) {
             isAdapterConnected = true;
-            updateStatusBar("Connected to " + selected);
 
-            // Auto-detectar IDCODE y cargar BSDL
-            uint32_t idcode = scanController->detectDevice();
-
-            // DIAGNÓSTICO 1: Mostrar IDCODE detectado
-            QMessageBox::information(this, "DEBUG 1 - IDCODE Detection",
-                QString("IDCODE detectado: 0x%1\n\nDecimal: %2")
-                    .arg(idcode, 8, 16, QChar('0'))
-                    .arg(idcode));
-
-            if (idcode != 0) {
-                isDeviceDetected = true;
-
-                // DIAGNÓSTICO 2: Verificar catálogo antes de autoLoadBSDL
-                size_t catalogSize = scanController->getCatalogSize();
-                QMessageBox::information(this, "DEBUG 2 - Catalog Status",
-                    QString("Intentando autoLoadBSDL()...\n\n"
-                            "Catalog size: %1 entries\n"
-                            "Buscando IDCODE: 0x%2")
-                        .arg(catalogSize)
-                        .arg(idcode, 8, 16, QChar('0')));
-
-                if (scanController->autoLoadBSDL()) {
-                    // DIAGNÓSTICO 3: BSDL cargado exitosamente
-                    QMessageBox::information(this, "DEBUG 3 - Success",
-                        QString("BSDL loaded successfully!\n\n"
-                                "Device: %1\n"
-                                "IDCODE: 0x%2")
-                            .arg(QString::fromStdString(scanController->getDeviceName()))
-                            .arg(idcode, 8, 16, QChar('0')));
-
-                    if (scanController->initializeDevice()) {
-                        isDeviceInitialized = true;
-                        updateStatusBar(QString("Device 0x%1 - BSDL loaded")
-                            .arg(idcode, 8, 16, QChar('0')));
-                        updatePinsTable();
-                        renderChipVisualization();
-                    }
-                } else {
-                    // DIAGNÓSTICO 4: Mostrar por qué falló
-                    QMessageBox::warning(this, "DEBUG 4 - FAILED",
-                        QString("autoLoadBSDL() FAILED\n\n"
-                                "IDCODE buscado: 0x%1\n"
-                                "Catalog size: %2 entries\n\n"
-                                "Posibles causas:\n"
-                                "- Archivo BSDL no existe\n"
-                                "- IDCODE no coincide\n"
-                                "- Error al parsear")
-                            .arg(idcode, 8, 16, QChar('0'))
-                            .arg(catalogSize));
-
-                    updateStatusBar(QString("Device 0x%1 - No BSDL found")
-                        .arg(idcode, 8, 16, QChar('0')));
+            // Encontrar nombre del adaptador
+            QString adapterName;
+            for (const auto& adapter : adapters) {
+                if (adapter.type == selectedType) {
+                    adapterName = QString::fromStdString(adapter.name);
+                    break;
                 }
-            } else {
-                QMessageBox::warning(this, "DEBUG - No Device",
-                    "IDCODE is 0 - No device detected");
             }
+
+            updateStatusBar(QString("Connected to %1 @ %2 Hz")
+                .arg(adapterName)
+                .arg(clockSpeed));
 
             enableControlsAfterConnection(true);
         } else {
             QMessageBox::critical(this, "Connection Error",
-                                "Failed to connect to adapter: " + selected);
+                "Failed to connect to adapter");
         }
     }
-    // ================================================================
 }
 
 void MainWindow::onExamineChain()
 {
-    // ==================== PUNTO DE INTEGRACIÓN 3 ====================
     if (!scanController || !isAdapterConnected) {
-        QMessageBox::warning(this, "Not Connected", "Please connect to a JTAG adapter first");
+        QMessageBox::warning(this, "Not Connected",
+            "Please connect to a JTAG adapter first (Scan > JTAG Connection)");
         return;
     }
 
     uint32_t idcode = scanController->detectDevice();
-    if (idcode != 0) {
+
+    if (idcode != 0 && idcode != 0xFFFFFFFF) {
         isDeviceDetected = true;
-        updateStatusBar(QString("Device detected - IDCODE: 0x%1").arg(idcode, 8, 16, QChar('0')));
 
-        // Llenar el combo de dispositivos
+        // Mostrar diálogo (NO auto-cargar BSDL)
+        ChainExamineDialog dialog(idcode, this);
+        dialog.exec();
+
+        // Actualizar combo
         ui->comboBoxDevice->clear();
-        ui->comboBoxDevice->addItem(QString("Device 0x%1").arg(idcode, 8, 16, QChar('0')));
+        ui->comboBoxDevice->addItem(
+            QString("Device 0x%1").arg(idcode, 8, 16, QChar('0')));
 
-        enableControlsAfterConnection(true);
+        updateStatusBar(QString("Device detected - IDCODE: 0x%1 (BSDL not loaded)")
+            .arg(idcode, 8, 16, QChar('0')));
+
+        // LANZAR New Project Wizard
+        onNewProjectWizard();
+
     } else {
-        QMessageBox::warning(this, "No Device", "No device detected on JTAG chain");
+        QMessageBox::warning(this, "No Device",
+            "No device detected on JTAG chain.\n\nCheck connections.");
     }
-    // ================================================================
 }
 
 void MainWindow::onRun()
@@ -579,7 +540,12 @@ void MainWindow::onDeviceInstruction()
 
 void MainWindow::onDeviceBSDLFile()
 {
-    // ==================== PUNTO DE INTEGRACIÓN 6 ====================
+    if (!isAdapterConnected) {
+        QMessageBox::warning(this, "Not Connected",
+            "Please connect to JTAG adapter first");
+        return;
+    }
+
     QString fileName = QFileDialog::getOpenFileName(this,
         tr("Open BSDL File"), "", tr("BSDL Files (*.bsd *.bsdl);;All Files (*)"));
 
@@ -587,22 +553,28 @@ void MainWindow::onDeviceBSDLFile()
         if (scanController->loadBSDL(fileName.toStdString())) {
             updateStatusBar("BSDL loaded: " + fileName);
 
-            // Inicializar dispositivo
             if (scanController->initializeDevice()) {
                 isDeviceInitialized = true;
-                enableControlsAfterConnection(true);
 
-                // Actualizar tabla de pines
                 updatePinsTable();
-
-                // Actualizar visualización del chip
                 renderChipVisualization();
+
+                // NUEVO: Auto-entrar en SAMPLE y empezar polling
+                if (scanController->enterSAMPLE()) {
+                    isCapturing = true;
+                    captureTimer.start();
+                    scanController->startPolling();
+                    updateStatusBar("SAMPLE mode active - reading pins continuously");
+                    ui->actionRun->setText("Stop");
+                }
+
+                enableControlsAfterConnection(true);
             }
         } else {
-            QMessageBox::critical(this, "Error", "Failed to load BSDL file");
+            QMessageBox::critical(this, "Error",
+                "Failed to load or parse BSDL file");
         }
     }
-    // ================================================================
 }
 
 void MainWindow::onDevicePackage()

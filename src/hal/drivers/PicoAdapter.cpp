@@ -2,10 +2,41 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include <QSerialPortInfo>
 
 //EST� STUBBEADO DE MOMENTO
 
 namespace JTAG {
+
+    // Detección dinámica de Pico por USB
+    bool PicoAdapter::isDeviceConnected() {
+        // VID/PID del Raspberry Pi Pico en modo CDC
+        const quint16 PICO_VID = 0x2E8A;  // Raspberry Pi
+        const quint16 PICO_PID = 0x000A;  // Pico (CDC mode)
+
+        const auto ports = QSerialPortInfo::availablePorts();
+        for (const auto& port : ports) {
+            if (port.vendorIdentifier() == PICO_VID &&
+                port.productIdentifier() == PICO_PID) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::string PicoAdapter::findPicoPort() {
+        const quint16 PICO_VID = 0x2E8A;
+        const quint16 PICO_PID = 0x000A;
+
+        const auto ports = QSerialPortInfo::availablePorts();
+        for (const auto& port : ports) {
+            if (port.vendorIdentifier() == PICO_VID &&
+                port.productIdentifier() == PICO_PID) {
+                return port.portName().toStdString();
+            }
+        }
+        return "";
+    }
 
     PicoAdapter::PicoAdapter() {
     }

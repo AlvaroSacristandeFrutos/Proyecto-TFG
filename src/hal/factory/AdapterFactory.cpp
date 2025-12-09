@@ -80,16 +80,20 @@ namespace JTAG {
     std::vector<AdapterDescriptor> AdapterFactory::detectAdapters() {
         std::vector<AdapterDescriptor> detected;
 
-        // 1. MOCK
+        // 1. MOCK - siempre disponible
         detected.push_back({ AdapterType::MOCK, "Mock Adapter", "Loopback Simulation" });
 
-        // 2. J-LINK
+        // 2. J-LINK - solo si DLL detectada
         if (JLinkAdapter::isLibraryAvailable()) {
             detected.push_back({ AdapterType::JLINK, "SEGGER J-Link", "DLL Detected" });
         }
 
-        // 3. PICO (Manual por ahora)
-        detected.push_back({ AdapterType::PICO, "Raspberry Pi Pico", "USB Serial" });
+        // 3. PICO - SOLO si está conectado por USB
+        if (PicoAdapter::isDeviceConnected()) {
+            std::string port = PicoAdapter::findPicoPort();
+            detected.push_back({ AdapterType::PICO, "Raspberry Pi Pico",
+                                "USB Serial - " + port });
+        }
 
         return detected;
     }

@@ -38,6 +38,10 @@ public:
     bool setClockSpeed(uint32_t speedHz) override;
     std::string getInfo() const override { return "JTAG over USB-CDC (TinyUSB)"; }
 
+    // Detección dinámica de Pico por USB
+    static bool isDeviceConnected();
+    static std::string findPicoPort();
+
 private:
     bool connected = false;
     uint32_t clockSpeed = 1000000;

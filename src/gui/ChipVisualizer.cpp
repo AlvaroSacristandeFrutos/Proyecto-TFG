@@ -271,6 +271,14 @@ void ChipVisualizer::clearPins() {
 
 void ChipVisualizer::setPackageType(const QString& packageType) {
     m_packageType = packageType;
+
+    if (packageType == "EDGE" || packageType.contains("TQFP") ||
+        packageType.contains("SOIC") || packageType.contains("QFP")) {
+        m_layoutMode = LayoutMode::EDGE_PINS;
+    } else {
+        m_layoutMode = LayoutMode::CENTER_GRID;
+    }
+
     m_pins.clear();
     m_scene->clear();
     createChipLayout();
@@ -388,6 +396,63 @@ void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model) {
     const auto& pins = model.getAllPins();
     if (pins.empty()) return;
 
+    // NUEVO: Algoritmo para EDGE_PINS (TQFP/SOIC)
+    if (m_layoutMode == LayoutMode::EDGE_PINS) {
+        const double chipSize = 400.0;
+        const double halfSize = chipSize / 2.0;
+
+        // Dibujar cuerpo del chip
+        m_chipBody = m_scene->addRect(-halfSize, -halfSize, chipSize, chipSize,
+            QPen(Qt::black, 2), QBrush(QColor(50, 50, 50)));
+
+        // Marca de orientación
+        m_scene->addEllipse(-halfSize + 10, -halfSize + 10, 20, 20,
+            QPen(Qt::white, 2), QBrush(Qt::white));
+
+        int totalPins = pins.size();
+        int pinsPerSide = (totalPins + 3) / 4;
+        const double margin = 50.0;
+
+        for (size_t i = 0; i < pins.size(); i++) {
+            int side = i / pinsPerSide;
+            int posInSide = i % pinsPerSide;
+            double spacing = (chipSize - 2 * margin) / (pinsPerSide > 1 ? pinsPerSide - 1 : 1);
+
+            double x, y;
+            PinSide pinSide;
+
+            switch (side) {
+                case 0: // LEFT
+                    x = -halfSize;
+                    y = -halfSize + margin + posInSide * spacing;
+                    pinSide = PinSide::LEFT;
+                    break;
+                case 1: // TOP
+                    x = -halfSize + margin + posInSide * spacing;
+                    y = -halfSize;
+                    pinSide = PinSide::TOP;
+                    break;
+                case 2: // RIGHT
+                    x = halfSize;
+                    y = -halfSize + margin + posInSide * spacing;
+                    pinSide = PinSide::RIGHT;
+                    break;
+                case 3: // BOTTOM
+                default:
+                    x = -halfSize + margin + posInSide * spacing;
+                    y = halfSize;
+                    pinSide = PinSide::BOTTOM;
+                    break;
+            }
+
+            addPin(QString::fromStdString(pins[i].name),
+                   QString::fromStdString(pins[i].pinNumber),
+                   x, y, pinSide);
+        }
+        return;
+    }
+
+    // MANTENER: Algoritmo actual de BGA (center grid)
     // 3. Calcular cuadrícula óptima para distribución uniforme
     int totalPins = pins.size();
 

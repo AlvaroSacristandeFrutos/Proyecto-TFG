@@ -13,7 +13,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # Buscar Qt6
-find_package(Qt6 COMPONENTS Widgets Core Gui REQUIRED)
+find_package(Qt6 COMPONENTS Widgets Core Gui SerialPort REQUIRED)
 
 # Incluir la carpeta src para que los #include funcionen
 include_directories(src)
@@ -26,7 +26,7 @@ file(GLOB_RECURSE PROJECT_SOURCES "src/*.cpp" "src/*.h" "src/*.ui")
 add_executable(JtagScannerQt WIN32 ${PROJECT_SOURCES})
 
 # --- LINKADO ---
-target_link_libraries(JtagScannerQt PRIVATE Qt6::Widgets Qt6::Core Qt6::Gui)
+target_link_libraries(JtagScannerQt PRIVATE Qt6::Widgets Qt6::Core Qt6::Gui Qt6::SerialPort)
 
 # Corrección para Linux
 if(UNIX AND NOT APPLE)
