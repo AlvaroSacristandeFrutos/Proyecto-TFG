@@ -1457,116 +1457,121 @@ void MainWindow::onWaveGoto()
 
 void MainWindow::updatePinsTable()
 {
-    // ==================== PUNTO DE INTEGRACIÓN 11 ====================
     if (!scanController) return;
+
+    const bool wasBlocked = ui->tableWidgetPins->signalsBlocked();
+    ui->tableWidgetPins->blockSignals(true);
 
     // Obtener lista de pines del modelo
     std::vector<std::string> pinNames = scanController->getPinList();
-    qDebug() << "[MainWindow::updatePinsTable] Updating" << pinNames.size() << "pins";
 
-    // NOTA: NO limpiar la tabla si ya tiene filas con nombres editados
-    // Solo limpiar si es la primera carga (tabla vacía)
+    // Si es la primera carga (tabla vacía), la llenamos
     bool isFirstLoad = (ui->tableWidgetPins->rowCount() == 0);
 
     if (isFirstLoad) {
         ui->tableWidgetPins->setRowCount(0);
-
-        // Llenar tabla con información completa
-        for (const auto& pinName : pinNames) {
+        for (const auto& pName : pinNames) {
             int row = ui->tableWidgetPins->rowCount();
             ui->tableWidgetPins->insertRow(row);
 
-            QString qPinName = QString::fromStdString(pinName);
+            QString qPinName = QString::fromStdString(pName);
 
-            // Columna 0: Name (editable por el usuario)
+            // Col 0: Name
             QTableWidgetItem* nameItem = new QTableWidgetItem(qPinName);
-            // Guardar el nombre REAL del pin en UserRole (no visible, no editable)
             nameItem->setData(Qt::UserRole, qPinName);
             ui->tableWidgetPins->setItem(row, 0, nameItem);
 
-            // Columna 1: Pin #
-            QString pinNumStr = QString::fromStdString(scanController->getPinNumber(pinName));
+            // Col 1: Pin #
+            QString pinNumStr = QString::fromStdString(scanController->getPinNumber(pName));
             ui->tableWidgetPins->setItem(row, 1, new QTableWidgetItem(pinNumStr));
 
-            // Columna 2: Port
-            QString port = QString::fromStdString(scanController->getPinPort(pinName));
+            // Col 2: Port
+            QString port = QString::fromStdString(scanController->getPinPort(pName));
             ui->tableWidgetPins->setItem(row, 2, new QTableWidgetItem(port));
 
-            // Columna 3: I/O Value (se actualizará con polling)
+            // Col 3: I/O Value (Inicial)
             ui->tableWidgetPins->setItem(row, 3, new QTableWidgetItem("?"));
 
-            // Columna 4: Type
-            QString type = QString::fromStdString(scanController->getPinType(pinName));
+            // Col 4: Type
+            QString type = QString::fromStdString(scanController->getPinType(pName));
             ui->tableWidgetPins->setItem(row, 4, new QTableWidgetItem(type));
         }
     }
 
-    // Actualizar valores I/O en tabla Y en visualizador
+    // --- BUCLE DE ACTUALIZACIÓN ---
     for (int row = 0; row < ui->tableWidgetPins->rowCount(); row++) {
-        QTableWidgetItem *nameItem = ui->tableWidgetPins->item(row, 0);
-        if (nameItem) {
-            QString displayName = nameItem->text();
-            QString realName = resolveRealPinName(displayName);
-            std::string pinName = realName.toStdString();
 
-            auto level = scanController->getPin(pinName);
+        // 1. Recuperar nombre (Columna 0) -> NECESARIO PARA DEFINIR pinName
+        QTableWidgetItem* nameItem = ui->tableWidgetPins->item(row, 0);
+        if (!nameItem) continue;
 
-            if (level.has_value()) {
-                QString valueStr;
-                VisualPinState visualState;
+        QString displayName = nameItem->text();
+        QString realName = resolveRealPinName(displayName);
+        std::string pinName = realName.toStdString(); // <--- Aquí definimos pinName
 
-                switch (level.value()) {
-                    case JTAG::PinLevel::LOW:
-                        valueStr = "0";
-                        visualState = VisualPinState::LOW;
-                        break;
-                    case JTAG::PinLevel::HIGH:
-                        valueStr = "1";
-                        visualState = VisualPinState::HIGH;
-                        break;
-                    case JTAG::PinLevel::HIGH_Z:
-                        valueStr = "Z";
-                        visualState = VisualPinState::UNKNOWN;
-                        break;
+        // 2. Leer estado del pin
+        auto level = scanController->getPin(pinName);
+
+        if (level.has_value()) {
+            QString valueStr;
+            VisualPinState visualState; // <--- Aquí definimos visualState
+
+            switch (level.value()) {
+            case JTAG::PinLevel::LOW:
+                valueStr = "0";
+                visualState = VisualPinState::LOW;
+                break;
+            case JTAG::PinLevel::HIGH:
+                valueStr = "1";
+                visualState = VisualPinState::HIGH;
+                break;
+            case JTAG::PinLevel::HIGH_Z:
+                valueStr = "Z";
+                visualState = VisualPinState::UNKNOWN;
+                break;
+            }
+
+            // 3. Actualizar la celda de VALOR (Columna 3)
+            QTableWidgetItem* valueItem = ui->tableWidgetPins->item(row, 3);
+            if (valueItem) {
+                valueItem->setText(valueStr);
+
+                // --- Lógica de Edición (EXTEST) ---
+                QString type = QString::fromStdString(scanController->getPinType(pinName));
+
+                // Permitir editar si es EXTEST y es una salida (incluyendo output2 del hack)
+                bool isEditable = (currentJTAGMode == JTAGMode::EXTEST) &&
+                    (type == "OUTPUT" || type == "INOUT" || type == "output2");
+
+                if (isEditable) {
+                    valueItem->setFlags(valueItem->flags() | Qt::ItemIsEditable);
+                    valueItem->setBackground(QColor(255, 255, 200)); // Amarillo
                 }
-
-                // Actualizar tabla
-                QTableWidgetItem *valueItem = ui->tableWidgetPins->item(row, 3);
-                if (valueItem) {
-                    valueItem->setText(valueStr);
-
-                    // Make cell editable in EXTEST mode for OUTPUT/INOUT pins
-                    QString type = QString::fromStdString(scanController->getPinType(pinName));
-                    bool isEditable = (currentJTAGMode == JTAGMode::EXTEST) &&
-                                     (type == "OUTPUT" || type == "INOUT");
-
-                    if (isEditable) {
-                        valueItem->setFlags(valueItem->flags() | Qt::ItemIsEditable);
-                        valueItem->setBackground(QColor(255, 255, 200)); // Light yellow
-                    } else {
-                        valueItem->setFlags(valueItem->flags() & ~Qt::ItemIsEditable);
-                        valueItem->setBackground(Qt::white);
-                    }
-                }
-
-                // Actualizar visualizador del chip (usar nombre real para el mapa interno)
-                if (chipVisualizer) {
-                    chipVisualizer->updatePinState(realName, visualState);
-                }
-
-                qDebug() << "[updatePinsTable] Pin" << QString::fromStdString(pinName)
-                    << "= " << valueStr << "-> visualState:" << (int)visualState;
-
-            } else {
-                // DEBUG: Si no tiene valor, mostrar
-                if (row == 0) {
-                    qDebug() << "[updatePinsTable] Pin" << QString::fromStdString(pinName)
-                             << "has NO VALUE (std::nullopt)";
+                else {
+                    valueItem->setFlags(valueItem->flags() & ~Qt::ItemIsEditable);
+                    valueItem->setBackground(Qt::white);
                 }
             }
+
+            // 4. Actualizar visualizador del chip
+            if (chipVisualizer) {
+                chipVisualizer->updatePinState(realName, visualState);
+            }
+
+            // Log del primer pin para debug (Opcional)
+            /*
+            if (row == 0) {
+                qDebug() << "[updatePinsTable] Pin" << realName
+                         << "= " << valueStr;
+            }
+            */
+        }
+        else {
+            // Si level no tiene valor (std::nullopt)
+             // qDebug() << "Pin no value:" << realName;
         }
     }
-    // ================================================================
+    ui->tableWidgetPins->blockSignals(wasBlocked);
 }
 
 QString MainWindow::resolveRealPinName(const QString& displayName) const
@@ -1838,43 +1843,34 @@ void MainWindow::onJTAGModeChanged(int modeId)
         return;
     }
 
-    bool success = false;
+    
+
+    JTAG::ScanMode targetMode;
     QString modeName;
 
     switch (modeId) {
-        case 0: // SAMPLE
-            success = scanController->enterSAMPLE();
-            modeName = "SAMPLE";
-            currentJTAGMode = JTAGMode::SAMPLE;
-            break;
-
-        case 1: // EXTEST
-            success = scanController->enterEXTEST();
-            modeName = "EXTEST";
-            currentJTAGMode = JTAGMode::EXTEST;
-            break;
-
-        case 2: // BYPASS
-            success = scanController->enterBYPASS();
-            modeName = "BYPASS";
-            currentJTAGMode = JTAGMode::BYPASS;
-            break;
-
-        default:
-            QMessageBox::warning(this, "Invalid Mode",
-                "Unknown JTAG mode selected");
-            return;
+    case 0:
+        targetMode = JTAG::ScanMode::SAMPLE;
+        modeName = "SAMPLE";
+        break;
+    case 1:
+        targetMode = JTAG::ScanMode::EXTEST;
+        modeName = "EXTEST";
+        break;
+    case 2:
+        targetMode = JTAG::ScanMode::BYPASS;
+        modeName = "BYPASS";
+        break;
+    default: return;
     }
 
-    if (success) {
-        updateStatusBar(QString("Switched to %1 mode").arg(modeName));
-        // Update table cell editability based on new mode
-        updatePinsTable();
-    } else {
-        QMessageBox::critical(this, "Mode Change Failed",
-            QString("Could not switch to %1 mode.\n"
-                   "Check connection and device state.").arg(modeName));
-    }
+    scanController->setScanMode(targetMode);
+
+    currentJTAGMode = (modeId == 0) ? JTAGMode::SAMPLE :
+        (modeId == 1) ? JTAGMode::EXTEST : JTAGMode::BYPASS;
+
+    updateStatusBar(QString("Mode changed to %1").arg(modeName));
+    updatePinsTable(); // Refrescar para habilitar/deshabilitar edición
 }
 
 void MainWindow::onSetAllToSafeState()

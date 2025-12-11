@@ -1,12 +1,12 @@
 -- BSDL file for TP1_laRVa module
 -- Device IDCODE: 0x47FAB
--- Cleaned for C++ Parser Compatibility
+-- MODIFIED FOR EXTEST SUPPORT (Inputs changed to Output2 where appropriate)
 
 entity TP1_laRVa is
   generic (PHYSICAL_PIN_MAP: string := "CUSTOM_PACKAGE");
   port (
     CLKIN: in bit;
-    RXD, TXD: inout bit; -- Simplificado para brevedad
+    RXD, TXD: inout bit;
     RXD1, TXD1: inout bit;
     RXD2, TXD2: inout bit;
     ICE_SCK, ICE_MOSI, ICE_MISO: inout bit;
@@ -48,32 +48,46 @@ entity TP1_laRVa is
   attribute BOUNDARY_REGISTER of TP1_laRVa : entity is
     "29 (BC_2, CLKIN,     input,    X)," &
     "28 (BC_1, *,         internal, X)," &
-    "27 (BC_1, TXD,       input,    X)," &
+    
+    -- UARTs (RX=Input, TX=Output2)
+    "27 (BC_1, TXD,       output2,  X)," &
     "26 (BC_2, RXD,       input,    X)," &
-    "25 (BC_1, TXD1,      input,    X)," &
+    "25 (BC_1, TXD1,      output2,  X)," &
     "24 (BC_2, RXD1,      input,    X)," &
-    "23 (BC_1, TXD2,      input,    X)," &
+    "23 (BC_1, TXD2,      output2,  X)," &
     "22 (BC_2, RXD2,      input,    X)," &
-    "21 (BC_1, ICE_SCK,   input,    X)," &
-    "20 (BC_1, ICE_MOSI,  input,    X)," &
+    
+    -- ICE SPI (SCK/MOSI=Output2, MISO=Input)
+    "21 (BC_1, ICE_SCK,   output2,  X)," &
+    "20 (BC_1, ICE_MOSI,  output2,  X)," &
     "19 (BC_2, ICE_MISO,  input,    X)," &
-    "18 (BC_1, BME680_CS, input,    X)," &
-    "17 (BC_1, ADC_CS,    input,    X)," &
-    "16 (BC_1, LORA_SCK,  input,    X)," &
-    "15 (BC_1, LORA_MOSI, input,    X)," &
+    
+    -- Chip Selects (Output2)
+    "18 (BC_1, BME680_CS, output2,  X)," &
+    "17 (BC_1, ADC_CS,    output2,  X)," &
+    
+    -- LoRa SPI (SCK/MOSI/CS/RESET=Output2, MISO/BUSY/DIO=Input)
+    "16 (BC_1, LORA_SCK,  output2,  X)," &
+    "15 (BC_1, LORA_MOSI, output2,  X)," &
     "14 (BC_2, LORA_MISO, input,    X)," &
-    "13 (BC_1, LORA_CS,   input,    X)," &
-    "12 (BC_1, LORA_RESET,input,    X)," &    
-    "11 (BC_1, L_RX,      input,    X)," &
-    "10 (BC_1, L_TX,      input,    X)," &
-    "9  (BC_1, EN_5V_UP,  input,    X)," &
-    "8  (BC_1, EN_5V_M4,  input,    X)," &
-    "7  (BC_1, EN_1V4_M4, input,    X)," &    
-    "6  (BC_1, M2_ON_OFF, input,    X)," &    
-    "5  (BC_1, ICE_LED1,  input,    X)," &    
-    "4  (BC_1, ICE_LED2,  input,    X)," &    
-    "3  (BC_1, ICE_LED3,  input,    X)," &    
-    "2  (BC_1, ICE_LED4,  input,    X)," &    
+    "13 (BC_1, LORA_CS,   output2,  X)," &
+    "12 (BC_1, LORA_RESET,output2,  X)," &    
+    "11 (BC_1, L_RX,      output2,  X)," &
+    "10 (BC_1, L_TX,      output2,  X)," &
+
+    -- Power Enables (Output2)
+    "9  (BC_1, EN_5V_UP,  output2,  X)," &
+    "8  (BC_1, EN_5V_M4,  output2,  X)," &
+    "7  (BC_1, EN_1V4_M4, output2,  X)," &    
+    "6  (BC_1, M2_ON_OFF, output2,  X)," &    
+    
+    -- LEDs (Output2) - ¡AHORA SÍ SE PODRÁN ENCENDER!
+    "5  (BC_1, ICE_LED1,  output2,  X)," &    
+    "4  (BC_1, ICE_LED2,  output2,  X)," &    
+    "3  (BC_1, ICE_LED3,  output2,  X)," &    
+    "2  (BC_1, ICE_LED4,  output2,  X)," &    
+    
+    -- LoRa Inputs
     "1  (BC_2, LORA_DIO1, input,    X)," &        
     "0  (BC_2, LORA_BUSY, input,    X)";
 

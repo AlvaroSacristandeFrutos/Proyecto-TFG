@@ -9,52 +9,65 @@
 #include "../core/BoundaryScanEngine.h"
 #include "../bsdl/DeviceModel.h"
 
-
 namespace JTAG {
 
-class ScanWorker : public QObject {
-    Q_OBJECT
+    // Definimos los modos posibles
+    enum class ScanMode {
+        SAMPLE,
+        EXTEST,
+        INTEST,
+        BYPASS
+    };
 
-public:
-    explicit ScanWorker(BoundaryScanEngine* engine, DeviceModel* model, QObject* parent = nullptr);
-    ~ScanWorker();
+    class ScanWorker : public QObject {
+        Q_OBJECT
 
-    // Control desde GUI thread
-    void start();
-    void stop();
-    void setPollInterval(int ms);
+    public:
+        explicit ScanWorker(BoundaryScanEngine* engine, DeviceModel* model, QObject* parent = nullptr);
+        ~ScanWorker();
 
-    // Thread-safe: GUI puede marcar pines como dirty
-    void markDirtyPin(size_t cellIndex, PinLevel level);
-    bool hasDirtyPins() const;
+        void start();
+        void stop();
+        void setPollInterval(int ms);
 
-signals:
-    void pinsUpdated(std::vector<PinLevel> pins);
-    void errorOccurred(QString message);
-    void started();
-    void stopped();
+        // Nuevo: Control de Modo explícito
+        void setScanMode(ScanMode mode);
 
-public slots:
-    void run();  // Loop principal del worker
+        // Thread-safe: GUI puede marcar pines como dirty
+        void markDirtyPin(size_t cellIndex, PinLevel level);
 
-private:
-    void processDirtyPins();
-    void switchToEXTEST();
-    void switchToSAMPLE();
+        // Método auxiliar para saber si hay cambios pendientes
+        bool hasDirtyPins() const;
 
-    BoundaryScanEngine* engine;
-    DeviceModel* deviceModel;
-    std::atomic<bool> running{false};
-    std::atomic<int> pollIntervalMs{100};
+    signals:
+        void pinsUpdated(std::vector<PinLevel> pins);
+        void errorOccurred(QString message);
+        void started();
+        void stopped();
 
-    // Estado dirty thread-safe
-    mutable std::mutex dirtyMutex;
-    std::map<size_t, PinLevel> dirtyPins;  // cellIndex → nuevo valor
+    public slots:
+        void run();
 
-    bool inEXTESTMode{false};
-};
+    private:
+        void processDirtyPins();
+
+        // Funciones de conmutación de bajo nivel
+        void applyMode(ScanMode mode);
+
+        BoundaryScanEngine* engine;
+        DeviceModel* deviceModel;
+
+        std::atomic<bool> running{ false };
+        std::atomic<int> pollIntervalMs{ 100 };
+
+        // Estado del modo deseado (Atómico para thread-safety)
+        std::atomic<ScanMode> currentMode{ ScanMode::SAMPLE };
+        ScanMode lastAppliedMode{ ScanMode::SAMPLE }; // Para detectar cambios
+
+        mutable std::mutex dirtyMutex;
+        std::map<size_t, PinLevel> dirtyPins;
+    };
 
 } // namespace JTAG
 
-// Registrar el tipo para señales Qt cross-thread
 Q_DECLARE_METATYPE(std::vector<JTAG::PinLevel>)

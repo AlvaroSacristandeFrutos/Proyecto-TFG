@@ -179,12 +179,19 @@ namespace JTAG {
         if (!deviceModel || !engine) return false;
 
         auto pinInfo = deviceModel->getPinInfo(pinName);
-        if (!pinInfo) return false;
-
-        if (pinInfo->outputCell != -1) {
-            return engine->setPin(pinInfo->outputCell, level);
+        if (!pinInfo) {
+            qWarning() << "setPin: Pin not found" << QString::fromStdString(pinName);
+            return false;
         }
-        return false;
+
+        // PROTECCIÓN: Si outputCell es negativo, NO INTENTAR ESCRIBIR
+        if (pinInfo->outputCell < 0) {
+            // Es un input (como CLKIN), ignoramos la escritura silenciosamente o con aviso debug
+            // qDebug() << "Skipping write to input pin:" << QString::fromStdString(pinName);
+            return false;
+        }
+
+        return engine->setPin(pinInfo->outputCell, level);
     }
 
     std::optional<PinLevel> ScanController::getPin(const std::string& pinName) const {
@@ -203,17 +210,26 @@ namespace JTAG {
         static bool firstTime = true;
         if (firstTime && pinName == "IO_LED0") {
             qDebug() << "[ScanController::getPin] Pin IO_LED0: inputCell=" << pinInfo->inputCell
-                     << ", outputCell=" << pinInfo->outputCell;
+                << ", outputCell=" << pinInfo->outputCell;
             firstTime = false;
         }
 
+        // 1. Prioridad: Leer celda de entrada (Input)
         if (pinInfo->inputCell != -1) {
             auto level = engine->getPin(pinInfo->inputCell);
             return level;
         }
 
+        // 2. CORRECCIÓN: Si no hay entrada, leer celda de SALIDA (Output)
+        // Esto soluciona el "not sampled" en los LEDs configurados como output2
+        if (pinInfo->outputCell != -1) {
+            auto level = engine->getPin(pinInfo->outputCell);
+            return level;
+        }
+
+        // Si llegamos aquí, no tiene ni entrada ni salida mapeada
         qDebug() << "[ScanController::getPin] WARNING: Pin" << QString::fromStdString(pinName)
-                 << "has inputCell = -1";
+            << "has inputCell = -1 AND outputCell = -1";
         return std::nullopt;
     }
 
@@ -432,6 +448,11 @@ namespace JTAG {
     bool ScanController::isNoTargetDetected() const {
         if (!engine) return false;
         return engine->isNoTargetDetected();
+    }
+    void ScanController::setScanMode(ScanMode mode) {
+        if (scanWorker) {
+            scanWorker->setScanMode(mode);
+        }
     }
 
 } // namespace JTAG

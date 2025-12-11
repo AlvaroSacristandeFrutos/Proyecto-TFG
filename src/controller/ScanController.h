@@ -26,7 +26,7 @@ namespace JTAG {
         ScanController& operator=(const ScanController&) = delete;
         ScanController(ScanController&&) noexcept = default;
         ScanController& operator=(ScanController&&) noexcept = default;
-
+        void setScanMode(ScanMode mode);
         // --- NUEVO: Método para obtener sondas detectadas ---
         std::vector<AdapterDescriptor> getDetectedAdapters() const;
 
