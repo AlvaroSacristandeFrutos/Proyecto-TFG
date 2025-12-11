@@ -122,6 +122,95 @@ namespace JTAG {
         return false;
     }
 
+    bool JLinkAdapter::isDeviceConnected() {
+        // TEMPORAL: Retornar true si la DLL está disponible
+        // Esto es equivalente al comportamiento anterior para testing
+        // El usuario puede verificar manualmente si su J-Link está conectado
+
+        bool dllAvailable = isLibraryAvailable();
+        std::cout << "[JLink] isDeviceConnected: DLL available = " << (dllAvailable ? "YES" : "NO") << "\n";
+
+        if (!dllAvailable) {
+            return false;
+        }
+
+        std::cout << "[JLink] isDeviceConnected: Returning TRUE (DLL detection mode for testing)\n";
+        std::cout << "[JLink] NOTE: Actual USB device detection would require JLINKARM_EMU_GetList()\n";
+
+        return true;  // TEMPORAL: Para que aparezca en la lista si la DLL existe
+
+#if 0  // Código anterior con EMU_GetList (comentado temporalmente)
+        // Paso 1: Verificar que DLL existe (prerequisito)
+        if (!isLibraryAvailable()) {
+            std::cout << "[JLink] isDeviceConnected: DLL not available\n";
+            return false;  // Sin DLL no podemos comunicarnos con J-Link
+        }
+        std::cout << "[JLink] isDeviceConnected: DLL found, checking for USB devices...\n";
+
+#if defined(_WIN32)
+        // Paso 2: Cargar DLL temporalmente
+        HMODULE tempHandle = LoadLibraryA(JLINK_LIB_NAME);
+        if (!tempHandle) {
+            std::string dllPath = findJLinkDLL();
+            if (!dllPath.empty()) {
+                tempHandle = LoadLibraryA(dllPath.c_str());
+            }
+        }
+
+        if (!tempHandle) {
+            return false;
+        }
+
+        // Paso 3: Obtener puntero a JLINKARM_EMU_GetList
+        typedef unsigned int (JLINK_CALL_CONV* JL_EMU_GETLIST_T)(
+            unsigned int, void*, unsigned int);
+
+        JL_EMU_GETLIST_T pJLINK_EMU_GetList =
+            reinterpret_cast<JL_EMU_GETLIST_T>(
+                GetProcAddress(tempHandle, "JLINKARM_EMU_GetList"));
+
+        if (!pJLINK_EMU_GetList) {
+            std::cout << "[JLink] ERROR: JLINKARM_EMU_GetList function not found in DLL\n";
+            FreeLibrary(tempHandle);
+            return false;  // Función no disponible en esta versión de DLL
+        }
+        std::cout << "[JLink] JLINKARM_EMU_GetList function found, calling it...\n";
+
+        // Paso 4: Consultar dispositivos conectados
+        unsigned int numDevices = pJLINK_EMU_GetList(
+            0,      // InterfaceMask: 0 = auto-detect (USB + IP)
+            NULL,   // pEmuInfo: NULL para solo contar
+            0       // MaxInfos: 0 para solo contar
+        );
+
+        std::cout << "[JLink] isDeviceConnected: Found " << numDevices << " J-Link device(s)\n";
+
+        // Paso 5: Limpiar y retornar
+        FreeLibrary(tempHandle);
+        return numDevices > 0;  // true si hay al menos un J-Link conectado
+#else
+        // Linux/macOS: Similar implementación con dlopen
+        void* tempHandle = dlopen(JLINK_LIB_NAME, RTLD_LAZY);
+        if (!tempHandle) {
+            return false;
+        }
+
+        typedef unsigned int (*JL_EMU_GETLIST_T)(unsigned int, void*, unsigned int);
+        JL_EMU_GETLIST_T pJLINK_EMU_GetList =
+            reinterpret_cast<JL_EMU_GETLIST_T>(dlsym(tempHandle, "JLINKARM_EMU_GetList"));
+
+        if (!pJLINK_EMU_GetList) {
+            dlclose(tempHandle);
+            return false;
+        }
+
+        unsigned int numDevices = pJLINK_EMU_GetList(0, NULL, 0);
+        dlclose(tempHandle);
+        return numDevices > 0;
+#endif
+#endif  // Fin del #if 0
+    }
+
     bool JLinkAdapter::loadLibrary() {
         if (libHandle) return true;
 
@@ -283,66 +372,83 @@ namespace JTAG {
     // ========== MÉTODOS DE ALTO NIVEL (transaccionales) ==========
 
     bool JLinkAdapter::scanIR(uint8_t irLength, const std::vector<uint8_t>& dataIn,
-                              std::vector<uint8_t>& dataOut) {
+        std::vector<uint8_t>& dataOut) {
         if (!connected) return false;
 
         std::cout << "[JLink] scanIR() - irLength: " << (int)irLength << "\n";
 
-        // Navegar a Shift-IR: TMS sequence = 1,1,0,0 desde Run-Test/Idle
-        std::vector<bool> toShiftIR = {true, true, false, false};
+        // --- CORRECCIÓN ROBUSTA ---
+        // 1. Resetear TAP completamente para salir de estados desconocidos.
+        //    Secuencia: 5 unos (Reset) + 1 cero (Idle)
+        std::vector<bool> resetSeq = { true, true, true, true, true, false };
+        if (!writeTMS(resetSeq)) {
+            std::cerr << "[JLink] ERROR: Failed to reset TAP in scanIR\n";
+            return false;
+        }
+
+        // 2. Navegar a Shift-IR desde Idle
+        //    Idle(0) -> Select-DR(1) -> Select-IR(1) -> Capture-IR(0) -> Shift-IR(0)
+        std::vector<bool> toShiftIR = { false, true, true, false, false };
         if (!writeTMS(toShiftIR)) {
             std::cerr << "[JLink] ERROR: Failed to navigate to Shift-IR\n";
             return false;
         }
 
-        // Shift IR data
+        // 3. Desplazar datos (Shift IR)
         size_t byteCount = (irLength + 7) / 8;
         dataOut.resize(byteCount);
-        if (!shiftData(dataIn, dataOut, irLength, true)) { // exitShift=true → Exit1-IR
+        // exitShift=true nos lleva a Exit1-IR
+        if (!shiftData(dataIn, dataOut, irLength, true)) {
             std::cerr << "[JLink] ERROR: Failed to shift IR data\n";
             return false;
         }
 
-        // Navegar a Run-Test/Idle: TMS sequence = 1,0 desde Exit1-IR
-        std::vector<bool> toIdle = {true, false};
-        if (!writeTMS(toIdle)) {
-            std::cerr << "[JLink] ERROR: Failed to return to Idle\n";
-            return false;
-        }
+        // 4. Volver a Idle
+        //    Exit1-IR -> Update-IR(1) -> Run-Test/Idle(0)
+        std::vector<bool> toIdle = { true, false };
+        if (!writeTMS(toIdle)) return false;
 
         std::cout << "[JLink] scanIR() - SUCCESS\n";
         return true;
     }
 
     bool JLinkAdapter::scanDR(size_t drLength, const std::vector<uint8_t>& dataIn,
-                              std::vector<uint8_t>& dataOut) {
+        std::vector<uint8_t>& dataOut) {
         if (!connected) return false;
 
-        std::cout << "[JLink] scanDR() - drLength: " << drLength << "\n";
+        // std::cout << "[JLink] scanDR() - drLength: " << drLength << "\n";
 
-        // Navegar a Shift-DR: TMS sequence = 1,0,0 desde Run-Test/Idle
-        std::vector<bool> toShiftDR = {true, false, false};
+        // 1. Navegar a Shift-DR con "Safety Zero"
+        //    Idle(0) -> Select-DR(1) -> Capture-DR(0) -> Shift-DR(0)
+        //    El paso por Capture-DR (el primer 0) es el que TOMA LA FOTO de los pines.
+        std::vector<bool> toShiftDR = { false, true, false, false };
+
         if (!writeTMS(toShiftDR)) {
             std::cerr << "[JLink] ERROR: Failed to navigate to Shift-DR\n";
             return false;
         }
 
-        // Shift DR data
+        // 2. Desplazar datos (Shift DR)
         size_t byteCount = (drLength + 7) / 8;
         dataOut.resize(byteCount);
-        if (!shiftData(dataIn, dataOut, drLength, true)) { // exitShift=true → Exit1-DR
+        // exitShift=true nos lleva a Exit1-DR
+        if (!shiftData(dataIn, dataOut, drLength, true)) {
             std::cerr << "[JLink] ERROR: Failed to shift DR data\n";
             return false;
         }
 
-        // Navegar a Run-Test/Idle: TMS sequence = 1,0 desde Exit1-DR
-        std::vector<bool> toIdle = {true, false};
-        if (!writeTMS(toIdle)) {
-            std::cerr << "[JLink] ERROR: Failed to return to Idle\n";
-            return false;
-        }
+        // 3. Volver a Idle
+        //    Exit1-DR -> Update-DR(1) -> Run-Test/Idle(0)
+        std::vector<bool> toIdle = { true, false };
+        if (!writeTMS(toIdle)) return false;
 
-        std::cout << "[JLink] scanDR() - SUCCESS\n";
+        // Debug opcional: ver datos brutos para confirmar que no es IDCODE (AB 7F...)
+        /*
+        std::cout << "[JLink] DR Data: ";
+        for(auto b : dataOut) printf("%02X ", b);
+        std::cout << "\n";
+        */
+
         return true;
     }
 

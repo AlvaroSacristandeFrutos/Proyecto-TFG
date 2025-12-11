@@ -103,6 +103,13 @@ namespace JTAG {
             dataIn[i] = (instruction >> (i * 8)) & 0xFF;
         }
 
+        // **DIAGNÓSTICO CRÍTICO**: Mostrar el buffer que se enviará
+        std::cout << "  -> Sending IR bytes: 0x";
+        for (size_t i = 0; i < numBytes; i++) {
+            printf("%02X", dataIn[i]);
+        }
+        std::cout << "\n";
+
         // Usar método transaccional de alto nivel
         // El adapter maneja toda la navegación TAP internamente
         std::vector<uint8_t> dataOut;
@@ -176,7 +183,12 @@ namespace JTAG {
             std::cerr << "BoundaryScanEngine::applyChanges() - scanDR failed\n";
             return false;
         }
-
+        std::cout << "DEBUG DATAOUT: ";
+        for (auto byte : dataOut) {
+            printf("%02X ", byte);
+        }
+        std::cout << std::endl;
+        bsr = dataOut;
         // El adapter nos deja en Run-Test/Idle después de scanDR
         currentState = TAPState::RUN_TEST_IDLE;
         return true;
@@ -192,11 +204,17 @@ namespace JTAG {
             std::cerr << "BoundaryScanEngine::samplePins() - scanDR failed\n";
             return false;
         }
+        std::cout << "RAW BSR (" << bsrLength << " bits): ";
+        for (auto byte : dataOut) {
+            // Imprime en Hexadecimal
+            printf("%02X ", byte);
+        }
+        std::cout << "\n";
+        // ---------------------------------------------------
 
         // Actualizar BSR con los datos leídos
         bsr = dataOut;
 
-        // El adapter nos deja en Run-Test/Idle después de scanDR
         currentState = TAPState::RUN_TEST_IDLE;
         return true;
     }
@@ -205,6 +223,20 @@ namespace JTAG {
         size_t numBytes = (bsrLength + 7) / 8;
         if (data.size() != numBytes) return false;
         bsr = data;
+        return true;
+    }
+
+    bool BoundaryScanEngine::isNoTargetDetected() const {
+        if (bsr.empty()) return false;
+
+        // Check if all bytes in BSR are 0xFF (pull-ups - no target)
+        for (uint8_t byte : bsr) {
+            if (byte != 0xFF) {
+                return false; // Found a byte that's not 0xFF
+            }
+        }
+
+        // All bytes are 0xFF - likely no target connected
         return true;
     }
 

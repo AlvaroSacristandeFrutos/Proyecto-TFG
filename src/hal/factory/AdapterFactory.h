@@ -24,8 +24,8 @@ namespace JTAG {
         static bool isSupported(AdapterType type);
         static std::vector<AdapterType> getSupportedAdapters();
 
-        // Escaneo físico de sondas conectadas (JLink DLL, Puertos COM, etc.)
-        static std::vector<AdapterDescriptor> detectAdapters();
+        // Lista estática de adaptadores disponibles (no verifica conexión física)
+        static std::vector<AdapterDescriptor> getAvailableAdapters();
 
     private:
         // Clase estática pura

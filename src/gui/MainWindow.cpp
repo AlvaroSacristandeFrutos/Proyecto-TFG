@@ -8,8 +8,13 @@
 #include <QWidgetAction>
 #include <QInputDialog>
 #include <QHeaderView>
+#include <QRadioButton>
+#include <QButtonGroup>
+#include <QPushButton>
+#include <QLabel>
 #include <iostream>
 #include <iomanip>
+#include <QMetaType>
 
 // IMPORTANTE: Descomenta estas líneas cuando integres el backend
 #include "../controller/ScanController.h"
@@ -25,16 +30,27 @@ MainWindow::MainWindow(QWidget *parent)
     , waveformScene(nullptr)
     , chipVisualizer(nullptr)
     , zoomComboBox(nullptr)
+    , radioSample(nullptr)
+    , radioExtest(nullptr)
+    , radioBypass(nullptr)
+    , jtagModeButtonGroup(nullptr)
+    , btnSetAllSafe(nullptr)
+    , btnSetAll1(nullptr)
+    , btnSetAllZ(nullptr)
+    , btnSetAll0(nullptr)
     , inoutActionGroup(nullptr)
     , currentZoom(1.0)
     , isAdapterConnected(false)
     , isDeviceDetected(false)
     , isDeviceInitialized(false)
+    , currentJTAGMode(JTAGMode::SAMPLE)
     , isCapturing(false)
     , waveformTimebase(1.0)
 {
     ui->setupUi(this);
     
+    qRegisterMetaType<std::vector<JTAG::PinLevel>>("std::vector<JTAG::PinLevel>");
+
     initializeUI();
     setupGraphicsViews();
     setupTables();
@@ -68,7 +84,6 @@ void MainWindow::initializeUI()
 
 void MainWindow::setupBackend()
 {
-    // ==================== PUNTO DE INTEGRACIÓN 1 ====================
     scanController = std::make_unique<JTAG::ScanController>();
 
     if (!scanController) {
@@ -205,6 +220,70 @@ void MainWindow::setupToolbar()
     inoutActionGroup->addAction(ui->actionIN_of_inout);
     inoutActionGroup->addAction(ui->actionOUT_of_inout);
     ui->actionIN_of_inout->setChecked(true);
+
+    // === JTAG MODE SELECTOR ===
+    ui->toolBar->addSeparator();
+
+    // Add label
+    QLabel *modeLabel = new QLabel(" Mode: ", this);
+    ui->toolBar->addWidget(modeLabel);
+
+    // Create radio buttons
+    radioSample = new QRadioButton("SAMPLE", this);
+    radioExtest = new QRadioButton("EXTEST", this);
+    radioBypass = new QRadioButton("BYPASS", this);
+
+    radioSample->setChecked(true); // Default to SAMPLE mode
+
+    // Create button group
+    jtagModeButtonGroup = new QButtonGroup(this);
+    jtagModeButtonGroup->addButton(radioSample, 0);
+    jtagModeButtonGroup->addButton(radioExtest, 1);
+    jtagModeButtonGroup->addButton(radioBypass, 2);
+
+    // Add to toolbar
+    ui->toolBar->addWidget(radioSample);
+    ui->toolBar->addWidget(radioExtest);
+    ui->toolBar->addWidget(radioBypass);
+
+    // Connect signal (use idClicked which passes the button ID directly)
+    connect(jtagModeButtonGroup, &QButtonGroup::idClicked,
+            this, &MainWindow::onJTAGModeChanged);
+
+    // === QUICK ACTION BUTTONS ===
+    ui->toolBar->addSeparator();
+
+    btnSetAllSafe = new QPushButton("Safe State", this);
+    btnSetAll1 = new QPushButton("All 1", this);
+    btnSetAllZ = new QPushButton("All Z", this);
+    btnSetAll0 = new QPushButton("All 0", this);
+
+    // Set button tooltips
+    btnSetAllSafe->setToolTip("Set all pins to BSDL safe values");
+    btnSetAll1->setToolTip("Set all output pins to HIGH");
+    btnSetAllZ->setToolTip("Set all output pins to High-Z");
+    btnSetAll0->setToolTip("Set all output pins to LOW");
+
+    // Add to toolbar
+    ui->toolBar->addWidget(btnSetAllSafe);
+    ui->toolBar->addWidget(btnSetAll1);
+    ui->toolBar->addWidget(btnSetAllZ);
+    ui->toolBar->addWidget(btnSetAll0);
+
+    // Connect signals
+    connect(btnSetAllSafe, &QPushButton::clicked, this, &MainWindow::onSetAllToSafeState);
+    connect(btnSetAll1, &QPushButton::clicked, this, &MainWindow::onSetAllTo1);
+    connect(btnSetAllZ, &QPushButton::clicked, this, &MainWindow::onSetAllToZ);
+    connect(btnSetAll0, &QPushButton::clicked, this, &MainWindow::onSetAllTo0);
+
+    // Initially disable these buttons (enable after connection)
+    radioSample->setEnabled(false);
+    radioExtest->setEnabled(false);
+    radioBypass->setEnabled(false);
+    btnSetAllSafe->setEnabled(false);
+    btnSetAll1->setEnabled(false);
+    btnSetAllZ->setEnabled(false);
+    btnSetAll0->setEnabled(false);
 }
 
 void MainWindow::setupConnections()
@@ -304,6 +383,15 @@ void MainWindow::enableControlsAfterConnection(bool enable)
     ui->actionSet_to_Z->setEnabled(enable && isDeviceInitialized);
     ui->actionToggle->setEnabled(enable && isDeviceInitialized);
     ui->actionSet_Bus_Value->setEnabled(enable && isDeviceInitialized);
+
+    // Enable JTAG mode selector and quick action buttons
+    radioSample->setEnabled(enable && isDeviceInitialized);
+    radioExtest->setEnabled(enable && isDeviceInitialized);
+    radioBypass->setEnabled(enable && isDeviceInitialized);
+    btnSetAllSafe->setEnabled(enable && isDeviceInitialized);
+    btnSetAll1->setEnabled(enable && isDeviceInitialized);
+    btnSetAllZ->setEnabled(enable && isDeviceInitialized);
+    btnSetAll0->setEnabled(enable && isDeviceInitialized);
 }
 
 // ============================================================================
@@ -452,8 +540,37 @@ void MainWindow::onJTAGConnection()
 
             enableControlsAfterConnection(true);
         } else {
-            QMessageBox::critical(this, "Connection Error",
-                "Failed to connect to adapter");
+            // Mensaje de error detallado según el tipo de adaptador
+            QString errorMsg = "Failed to connect to adapter.\n\n";
+
+            switch (selectedType) {
+                case JTAG::AdapterType::JLINK:
+                    errorMsg += "J-Link troubleshooting:\n"
+                               "• Check J-Link is connected via USB\n"
+                               "• Verify drivers are installed\n"
+                               "• Close other software using J-Link\n"
+                               "• Try reconnecting the device";
+                    break;
+
+                case JTAG::AdapterType::PICO:
+                    errorMsg += "Raspberry Pi Pico troubleshooting:\n"
+                               "• Check Pico is connected via USB\n"
+                               "• Verify correct firmware is loaded\n"
+                               "• Check COM port is not in use\n"
+                               "• Try reconnecting the device";
+                    break;
+
+                case JTAG::AdapterType::MOCK:
+                    errorMsg += "Mock Adapter should always connect.\n"
+                               "This is an unexpected error.";
+                    break;
+
+                default:
+                    errorMsg += "Check adapter connection and try again.";
+                    break;
+            }
+
+            QMessageBox::critical(this, "Connection Error", errorMsg);
         }
     }
 }
@@ -494,7 +611,6 @@ void MainWindow::onExamineChain()
 
 void MainWindow::onRun()
 {
-    // ==================== PUNTO DE INTEGRACIÓN 4 ====================
     if (!isDeviceInitialized) {
         QMessageBox::warning(this, "Not Ready", "Please initialize device first");
         return;
@@ -516,12 +632,10 @@ void MainWindow::onRun()
         updateStatusBar("Stopped");
         ui->actionRun->setText("Run");
     }
-    // ================================================================
 }
 
 void MainWindow::onJTAGReset()
 {
-    // ==================== PUNTO DE INTEGRACIÓN 5 ====================
     if (scanController && isAdapterConnected) {
         if (scanController->reset()) {
             updateStatusBar("JTAG TAP reset successful");
@@ -529,7 +643,6 @@ void MainWindow::onJTAGReset()
             QMessageBox::critical(this, "Error", "JTAG reset failed");
         }
     }
-    // ================================================================
 }
 
 void MainWindow::onDeviceInstruction()
@@ -590,8 +703,14 @@ void MainWindow::onDevicePackage()
     info += "IDCODE: 0x" + QString::number(scanController->getIDCODE(), 16).toUpper().rightJustified(8, '0') + "\n";
     info += "Package: " + QString::fromStdString(scanController->getPackageInfo()) + "\n";
     info += "\nBoundary Scan Chain:\n";
-    info += "  IR Length: " + QString::number(scanController->getDeviceName().empty() ? 0 : 8) + " bits\n";
-    info += "  BSR Length: " + QString::number(scanController->getDeviceName().empty() ? 0 : 32) + " bits\n";
+
+    // Obtener valores reales del DeviceModel (NO hardcodeados)
+    const JTAG::DeviceModel* deviceModel = scanController->getDeviceModel();
+    size_t irLength = deviceModel ? deviceModel->getIRLength() : 0;
+    size_t bsrLength = deviceModel ? deviceModel->getBSRLength() : 0;
+
+    info += "  IR Length: " + QString::number(irLength) + " bits\n";
+    info += "  BSR Length: " + QString::number(bsrLength) + " bits\n";
     info += "  Pin Count: " + QString::number(scanController->getPinList().size()) + "\n";
 
     QMessageBox::information(this, "Device Package Information", info);
@@ -599,7 +718,6 @@ void MainWindow::onDevicePackage()
 
 void MainWindow::onDeviceProperties()
 {
-    // ==================== PUNTO DE INTEGRACIÓN 7 ====================
     if (!scanController || !isDeviceDetected) {
         QMessageBox::warning(this, "No Device", "No device detected");
         return;
@@ -611,7 +729,6 @@ void MainWindow::onDeviceProperties()
     info += "Adapter: " + QString::fromStdString(scanController->getAdapterInfo()) + "\n";
 
     QMessageBox::information(this, "Device Properties", info);
-    // ================================================================
 }
 
 // ============================================================================
@@ -653,18 +770,59 @@ void MainWindow::onSearchPinsButton()
 
 void MainWindow::onPinTableItemChanged(QTableWidgetItem* item)
 {
-    // Solo procesar cambios en la columna 0 (Name)
-    if (item->column() != 0) return;
+    // Handle column 0 (Name) changes
+    if (item->column() == 0) {
+        QString newDisplayName = item->text();
+        QString realName = item->data(Qt::UserRole).toString();
 
-    QString newDisplayName = item->text();
-    QString realName = item->data(Qt::UserRole).toString();
+        qDebug() << "[onPinTableItemChanged] Pin display name changed to:" << newDisplayName
+                 << "(real name:" << realName << ")";
 
-    qDebug() << "[onPinTableItemChanged] Pin display name changed to:" << newDisplayName
-             << "(real name:" << realName << ")";
+        // El cambio de nombre ya está hecho en el item
+        // resolveRealPinName() usará el UserRole automáticamente
+        return;
+    }
 
-    // El cambio de nombre ya está hecho en el item
-    // resolveRealPinName() usará el UserRole automáticamente
-    // No necesitamos hacer nada más
+    // Handle column 3 (I/O Value) changes in EXTEST mode
+    if (item->column() == 3 && currentJTAGMode == JTAGMode::EXTEST) {
+        if (!scanController) return;
+
+        // Get the pin name from column 0
+        int row = item->row();
+        QTableWidgetItem* nameItem = ui->tableWidgetPins->item(row, 0);
+        if (!nameItem) return;
+
+        QString displayName = nameItem->text();
+        QString realName = resolveRealPinName(displayName);
+        std::string pinName = realName.toStdString();
+
+        // Parse the new value
+        QString valueStr = item->text().toUpper();
+        JTAG::PinLevel newLevel;
+
+        if (valueStr == "0") {
+            newLevel = JTAG::PinLevel::LOW;
+        } else if (valueStr == "1") {
+            newLevel = JTAG::PinLevel::HIGH;
+        } else if (valueStr == "Z") {
+            newLevel = JTAG::PinLevel::HIGH_Z;
+        } else {
+            // Invalid value - restore previous
+            updatePinsTable();
+            return;
+        }
+
+        // Apply the change
+        if (scanController->setPin(pinName, newLevel)) {
+            scanController->applyChanges();
+            qDebug() << "[onPinTableItemChanged] Set pin" << realName << "to" << valueStr;
+            updateStatusBar(QString("Set %1 to %2").arg(realName).arg(valueStr));
+        } else {
+            QMessageBox::warning(this, "Pin Update Failed",
+                QString("Could not set pin %1 to %2").arg(realName).arg(valueStr));
+            updatePinsTable(); // Restore table
+        }
+    }
 }
 
 void MainWindow::onPinTableSelectionChanged()
@@ -697,7 +855,6 @@ void MainWindow::onEditPinNamesAndBuses()
 
 void MainWindow::onSetTo0()
 {
-    // ==================== PUNTO DE INTEGRACIÓN 8 ====================
     QList<QTableWidgetItem*> selectedItems = ui->tableWidgetPins->selectedItems();
     if (selectedItems.isEmpty()) {
         updateStatusBar("No pins selected");
@@ -720,7 +877,6 @@ void MainWindow::onSetTo0()
 
     // No se necesita applyChanges() - el worker lo hace automáticamente
     updateStatusBar(QString("Set %1 pin(s) to 0").arg(rows.size()));
-    // ================================================================
 }
 
 void MainWindow::onSetTo1()
@@ -910,7 +1066,6 @@ void MainWindow::onWatchShow()
 
 void MainWindow::onWatchAddSignal()
 {
-    // ==================== PUNTO DE INTEGRACIÓN 9 ====================
     QList<QTableWidgetItem*> selectedItems = ui->tableWidgetPins->selectedItems();
     if (selectedItems.isEmpty()) {
         updateStatusBar("No pins selected");
@@ -949,7 +1104,6 @@ void MainWindow::onWatchAddSignal()
     }
 
     updateStatusBar(QString("Added %1 signal(s) to Watch").arg(rows.size()));
-    // ================================================================
 }
 
 void MainWindow::onWatchRemove()
@@ -1380,6 +1534,19 @@ void MainWindow::updatePinsTable()
                 QTableWidgetItem *valueItem = ui->tableWidgetPins->item(row, 3);
                 if (valueItem) {
                     valueItem->setText(valueStr);
+
+                    // Make cell editable in EXTEST mode for OUTPUT/INOUT pins
+                    QString type = QString::fromStdString(scanController->getPinType(pinName));
+                    bool isEditable = (currentJTAGMode == JTAGMode::EXTEST) &&
+                                     (type == "OUTPUT" || type == "INOUT");
+
+                    if (isEditable) {
+                        valueItem->setFlags(valueItem->flags() | Qt::ItemIsEditable);
+                        valueItem->setBackground(QColor(255, 255, 200)); // Light yellow
+                    } else {
+                        valueItem->setFlags(valueItem->flags() & ~Qt::ItemIsEditable);
+                        valueItem->setBackground(Qt::white);
+                    }
                 }
 
                 // Actualizar visualizador del chip (usar nombre real para el mapa interno)
@@ -1387,11 +1554,9 @@ void MainWindow::updatePinsTable()
                     chipVisualizer->updatePinState(realName, visualState);
                 }
 
-                // DEBUG: Primer pin para verificar
-                if (row == 0) {
-                    qDebug() << "[updatePinsTable] Pin" << QString::fromStdString(pinName)
-                             << "= " << valueStr << "-> visualState:" << (int)visualState;
-                }
+                qDebug() << "[updatePinsTable] Pin" << QString::fromStdString(pinName)
+                    << "= " << valueStr << "-> visualState:" << (int)visualState;
+
             } else {
                 // DEBUG: Si no tiene valor, mostrar
                 if (row == 0) {
@@ -1610,11 +1775,27 @@ void MainWindow::onPinsDataReady(std::vector<JTAG::PinLevel> pins)
     qDebug() << "[MainWindow::onPinsDataReady] Called with" << pins.size() << "pins"
              << "isCapturing:" << isCapturing;
 
+    // Check if no target is detected (all pull-ups)
+    static bool warningShown = false;
+    if (scanController && scanController->isNoTargetDetected()) {
+        if (!warningShown) {
+            statusBar()->showMessage("⚠ WARNING: No target detected - TDO showing pull-ups (all 1s)", 0);
+            warningShown = true;
+        }
+    } else {
+        if (warningShown) {
+            warningShown = false;
+            statusBar()->clearMessage();
+        }
+    }
+
     // Mostrar en barra de estado que recibimos datos (DEBUG)
     static int updateCount = 0;
     updateCount++;
-    statusBar()->showMessage(QString("Updates received: %1 (pins: %2)")
-                            .arg(updateCount).arg(pins.size()), 100);
+    if (!warningShown) { // Only show update count if no warning
+        statusBar()->showMessage(QString("Updates received: %1 (pins: %2)")
+                                .arg(updateCount).arg(pins.size()), 100);
+    }
 
     if (!scanController || !isCapturing) {
         qDebug() << "[MainWindow::onPinsDataReady] SKIPPED - not capturing";
@@ -1643,4 +1824,129 @@ void MainWindow::onScanError(QString message)
         ui->actionRun->setText("Run");
         updateStatusBar("Stopped due to error");
     }
+}
+
+// ============================================================================
+// JTAG MODE SELECTION AND QUICK ACTIONS
+// ============================================================================
+
+void MainWindow::onJTAGModeChanged(int modeId)
+{
+    if (!scanController) {
+        QMessageBox::warning(this, "No Controller",
+            "Scan controller not initialized");
+        return;
+    }
+
+    bool success = false;
+    QString modeName;
+
+    switch (modeId) {
+        case 0: // SAMPLE
+            success = scanController->enterSAMPLE();
+            modeName = "SAMPLE";
+            currentJTAGMode = JTAGMode::SAMPLE;
+            break;
+
+        case 1: // EXTEST
+            success = scanController->enterEXTEST();
+            modeName = "EXTEST";
+            currentJTAGMode = JTAGMode::EXTEST;
+            break;
+
+        case 2: // BYPASS
+            success = scanController->enterBYPASS();
+            modeName = "BYPASS";
+            currentJTAGMode = JTAGMode::BYPASS;
+            break;
+
+        default:
+            QMessageBox::warning(this, "Invalid Mode",
+                "Unknown JTAG mode selected");
+            return;
+    }
+
+    if (success) {
+        updateStatusBar(QString("Switched to %1 mode").arg(modeName));
+        // Update table cell editability based on new mode
+        updatePinsTable();
+    } else {
+        QMessageBox::critical(this, "Mode Change Failed",
+            QString("Could not switch to %1 mode.\n"
+                   "Check connection and device state.").arg(modeName));
+    }
+}
+
+void MainWindow::onSetAllToSafeState()
+{
+    if (!scanController) return;
+
+    // Use the menu action implementation which already exists
+    onSetAllDevicePinsToBSDLSafe();
+}
+
+void MainWindow::onSetAllTo1()
+{
+    if (!scanController) return;
+
+    // Get all output pins and set them to HIGH
+    auto pinList = scanController->getPinList();
+    int count = 0;
+
+    for (const auto& pinName : pinList) {
+        std::string type = scanController->getPinType(pinName);
+        if (type == "OUTPUT" || type == "INOUT") {
+            if (scanController->setPin(pinName, JTAG::PinLevel::HIGH)) {
+                count++;
+            }
+        }
+    }
+
+    scanController->applyChanges();
+    updateStatusBar(QString("Set %1 output pins to HIGH").arg(count));
+    updatePinsTable();
+}
+
+void MainWindow::onSetAllToZ()
+{
+    if (!scanController) return;
+
+    // Get all output pins and set them to HIGH_Z
+    auto pinList = scanController->getPinList();
+    int count = 0;
+
+    for (const auto& pinName : pinList) {
+        std::string type = scanController->getPinType(pinName);
+        if (type == "OUTPUT" || type == "INOUT") {
+            if (scanController->setPin(pinName, JTAG::PinLevel::HIGH_Z)) {
+                count++;
+            }
+        }
+    }
+
+    scanController->applyChanges();
+    updateStatusBar(QString("Set %1 output pins to High-Z").arg(count));
+    updatePinsTable();
+}
+
+void MainWindow::onSetAllTo0()
+{
+    if (!scanController) return;
+
+    // Get all output pins and set them to LOW
+    auto pinList = scanController->getPinList();
+    int count = 0;
+
+    for (const auto& pinName : pinList) {
+        std::string type = scanController->getPinType(pinName);
+        if (type == "OUTPUT" || type == "INOUT") {
+            if (scanController->setPin(pinName, JTAG::PinLevel::LOW)) {
+                count++;
+            }
+        }
+    }
+
+    scanController->applyChanges();
+    updateStatusBar(QString("Set %1 output pins to LOW").arg(count));
+    updatePinsTable();
 }

@@ -1,9 +1,13 @@
 #include "mainwindow.h"
 
 #include <QApplication>
+#include "../controller/ScanWorker.h"  // Para acceder a JTAG::PinLevel
 
 int main(int argc, char *argv[])
 {
+    // Registrar tipos personalizados para señales Qt cross-thread
+    qRegisterMetaType<std::vector<JTAG::PinLevel>>("std::vector<JTAG::PinLevel>");
+
     QApplication app(argc, argv);
     
     // Set application information

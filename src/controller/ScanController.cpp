@@ -35,8 +35,8 @@ namespace JTAG {
     // ============================================================================
 
     std::vector<AdapterDescriptor> ScanController::getDetectedAdapters() const {
-        // Delega la llamada a la Factoría
-        return AdapterFactory::detectAdapters();
+        // Delega la llamada a la Factoría (lista estática)
+        return AdapterFactory::getAvailableAdapters();
     }
 
     // ============================================================================
@@ -59,6 +59,13 @@ namespace JTAG {
             adapter->setClockSpeed(clockSpeed);
             initialized = false;
             detectedIDCODE = 0;
+
+            // NUEVO: Si es MockAdapter, auto-generar DeviceModel
+            if (type == AdapterType::MOCK) {
+                createMockDeviceModel();
+                qDebug() << "[ScanController] MockAdapter connected - auto-generated DeviceModel";
+            }
+
             return true;
 
         }
@@ -144,15 +151,15 @@ namespace JTAG {
         engine->samplePins();
 
         // Crear worker y moverlo al thread
-        scanWorker = new ScanWorker(engine.get());
+        scanWorker = new ScanWorker(engine.get(), deviceModel.get());
         scanWorker->moveToThread(workerThread);
 
-        // Conectar señales
+        // Conectar señales (especificar Qt::QueuedConnection explícitamente para cross-thread)
         connect(workerThread, &QThread::started, scanWorker, &ScanWorker::run);
         connect(scanWorker, &ScanWorker::pinsUpdated,
-                this, &ScanController::onPinsUpdated);
+                this, &ScanController::onPinsUpdated, Qt::QueuedConnection);
         connect(scanWorker, &ScanWorker::errorOccurred,
-                this, &ScanController::onWorkerError);
+                this, &ScanController::onWorkerError, Qt::QueuedConnection);
 
         initialized = true;
         return true;
@@ -306,40 +313,6 @@ namespace JTAG {
         return bsdlCatalog->scanDirectory(directory);
     }
 
-    bool ScanController::autoLoadBSDL() {
-        std::cout << "[ScanController::autoLoadBSDL] Called" << std::endl;
-
-        if (!bsdlCatalog) {
-            std::cout << "[ScanController::autoLoadBSDL] ERROR: bsdlCatalog is NULL!" << std::endl;
-            return false;
-        }
-
-        if (detectedIDCODE == 0) {
-            std::cout << "[ScanController::autoLoadBSDL] ERROR: detectedIDCODE is 0!" << std::endl;
-            return false;
-        }
-
-        std::cout << "[ScanController::autoLoadBSDL] Looking for IDCODE 0x"
-                  << std::hex << std::setfill('0') << std::setw(8) << detectedIDCODE
-                  << std::dec << std::endl;
-        std::cout << "[ScanController::autoLoadBSDL] Catalog has "
-                  << bsdlCatalog->size() << " entries" << std::endl;
-
-        auto bsdlPath = bsdlCatalog->findByIDCODE(detectedIDCODE);
-
-        if (bsdlPath.has_value()) {
-            std::cout << "[ScanController::autoLoadBSDL] FOUND! Path: "
-                      << bsdlPath.value() << std::endl;
-            bool loaded = loadBSDL(bsdlPath.value());
-            std::cout << "[ScanController::autoLoadBSDL] loadBSDL returned: "
-                      << (loaded ? "TRUE" : "FALSE") << std::endl;
-            return loaded;
-        }
-
-        std::cout << "[ScanController::autoLoadBSDL] NOT FOUND in catalog!" << std::endl;
-        return false;
-    }
-
     std::string ScanController::getPinPort(const std::string& pinName) const {
         return deviceModel ? deviceModel->getPinPort(pinName) : "";
     }
@@ -405,6 +378,60 @@ namespace JTAG {
         qWarning() << "Worker error:" << message;
         // Reemitir error para la GUI
         emit errorOccurred(message);
+    }
+
+    void ScanController::createMockDeviceModel() {
+        qDebug() << "[ScanController] Creating mock DeviceModel for MockAdapter";
+
+        // Crear BSDL data simulado para MockAdapter
+        BSDLData mockData;
+        mockData.entityName = "MOCK_DEVICE";
+        mockData.idCode = 0x12345678;
+        mockData.boundaryLength = 256;  // 256 bits de BSR
+        mockData.instructionLength = 8;
+        mockData.physicalPinMap = "BGA";
+
+        // Agregar instrucciones básicas
+        Instruction sampInstr;
+        sampInstr.name = "SAMPLE";
+        sampInstr.opcodes.push_back("00000001");
+        mockData.instructions.push_back(sampInstr);
+
+        Instruction extestInstr;
+        extestInstr.name = "EXTEST";
+        extestInstr.opcodes.push_back("00000000");
+        mockData.instructions.push_back(extestInstr);
+
+        // Crear 32 pines simulados (8 bits por pin = 256 bits totales)
+        for (int i = 0; i < 32; i++) {
+            // Celda INPUT para cada pin
+            BoundaryCell inputCell;
+            inputCell.cellNumber = i * 8;
+            inputCell.portName = "MOCK_PIN_" + std::to_string(i);
+            inputCell.function = CellFunction::INPUT;
+            inputCell.safeValue = SafeBit::DONT_CARE;
+            inputCell.controlCell = -1;
+            inputCell.disableValue = SafeBit::DONT_CARE;
+            mockData.boundaryCells.push_back(inputCell);
+
+            // Agregar pin mapping (nombre de pin → número físico)
+            mockData.pinMaps["MOCK_PIN_" + std::to_string(i)].push_back(std::to_string(i + 1));
+        }
+
+        // Crear DeviceModel y cargar datos simulados
+        deviceModel = std::make_unique<JTAG::DeviceModel>();
+        deviceModel->loadFromData(mockData);
+
+        // Configurar IDCODE detectado
+        detectedIDCODE = 0x12345678;
+
+        qDebug() << "[ScanController] Created mock DeviceModel with"
+                 << deviceModel->getAllPins().size() << "pins";
+    }
+
+    bool ScanController::isNoTargetDetected() const {
+        if (!engine) return false;
+        return engine->isNoTargetDetected();
     }
 
 } // namespace JTAG

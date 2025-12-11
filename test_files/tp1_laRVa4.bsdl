@@ -1,0 +1,80 @@
+-- BSDL file for TP1_laRVa module
+-- Device IDCODE: 0x47FAB
+-- Cleaned for C++ Parser Compatibility
+
+entity TP1_laRVa is
+  generic (PHYSICAL_PIN_MAP: string := "CUSTOM_PACKAGE");
+  port (
+    CLKIN: in bit;
+    RXD, TXD: inout bit; -- Simplificado para brevedad
+    RXD1, TXD1: inout bit;
+    RXD2, TXD2: inout bit;
+    ICE_SCK, ICE_MOSI, ICE_MISO: inout bit;
+    BME680_CS, ADC_CS: out bit;
+    LORA_SCK, LORA_MOSI, LORA_MISO, LORA_CS: inout bit;
+    LORA_BUSY, LORA_DIO1, LORA_RESET: inout bit;
+    L_RX, L_TX: out bit;
+    ICE_LED1, ICE_LED2, ICE_LED3, ICE_LED4: out bit;
+    EN_5V_UP, EN_5V_M4, EN_1V4_M4, M2_ON_OFF: out bit;
+    TCK, TMS, TDI, TDO: linkage bit
+  );
+
+  use STD_1149_1_2001.all;
+  attribute COMPONENT_CONFORMANCE of TP1_laRVa : entity is "STD_1149_1_2001"; 
+  attribute PIN_MAP of TP1_laRVa : entity is PHYSICAL_PIN_MAP;
+  
+  constant CUSTOM_PACKAGE : PIN_MAP_STRING :=
+    "CLKIN:P1, RXD:P8, TXD:P9, RXD1:P49, TXD1:P52, RXD2:P122, TXD2:P121," &
+    "ICE_SCK:P2, ICE_MOSI:P3, ICE_MISO:P4, BME680_CS:P5, ADC_CS:P6," &
+    "LORA_SCK:P115, LORA_MOSI:P110, LORA_MISO:P113, LORA_CS:P117," &
+    "LORA_BUSY:P7, LORA_DIO1:P10, LORA_RESET:P119, L_RX:P11, L_TX:P12," &
+    "ICE_LED1:P13, ICE_LED2:P14, ICE_LED3:P15, ICE_LED4:P16," &
+    "EN_5V_UP:P17, EN_5V_M4:P18, EN_1V4_M4:P19, M2_ON_OFF:P20," &
+    "TCK:P30, TMS:P31, TDI:P32, TDO:P33";
+
+  attribute INSTRUCTION_LENGTH of TP1_laRVa : entity is 3;
+  attribute INSTRUCTION_OPCODE of TP1_laRVa : entity is
+    "BYPASS (111), EXTEST (010), INTEST (011), SAMPLE (001), IDCODE (000)";
+  attribute IDCODE_REGISTER of TP1_laRVa : entity is "00000000000001000111111110101011";
+
+  attribute REGISTER_ACCESS of TP1_laRVa : entity is "BYPASS (BYPASS), DEVICE_ID (IDCODE), BOUNDARY (INTEST,EXTEST,SAMPLE)";
+  attribute TAP_SCAN_CLOCK of TCK : signal is (10.0e6, BOTH);
+  attribute TAP_SCAN_IN of TDI : signal is true;
+  attribute TAP_SCAN_MODE of TMS : signal is true;
+  attribute TAP_SCAN_OUT of TDO : signal is true;
+
+  attribute BOUNDARY_LENGTH of TP1_laRVa : entity is 30;
+
+  attribute BOUNDARY_REGISTER of TP1_laRVa : entity is
+    "29 (BC_2, CLKIN,     input,    X)," &
+    "28 (BC_1, *,         internal, X)," &
+    "27 (BC_1, TXD,       input,    X)," &
+    "26 (BC_2, RXD,       input,    X)," &
+    "25 (BC_1, TXD1,      input,    X)," &
+    "24 (BC_2, RXD1,      input,    X)," &
+    "23 (BC_1, TXD2,      input,    X)," &
+    "22 (BC_2, RXD2,      input,    X)," &
+    "21 (BC_1, ICE_SCK,   input,    X)," &
+    "20 (BC_1, ICE_MOSI,  input,    X)," &
+    "19 (BC_2, ICE_MISO,  input,    X)," &
+    "18 (BC_1, BME680_CS, input,    X)," &
+    "17 (BC_1, ADC_CS,    input,    X)," &
+    "16 (BC_1, LORA_SCK,  input,    X)," &
+    "15 (BC_1, LORA_MOSI, input,    X)," &
+    "14 (BC_2, LORA_MISO, input,    X)," &
+    "13 (BC_1, LORA_CS,   input,    X)," &
+    "12 (BC_1, LORA_RESET,input,    X)," &    
+    "11 (BC_1, L_RX,      input,    X)," &
+    "10 (BC_1, L_TX,      input,    X)," &
+    "9  (BC_1, EN_5V_UP,  input,    X)," &
+    "8  (BC_1, EN_5V_M4,  input,    X)," &
+    "7  (BC_1, EN_1V4_M4, input,    X)," &    
+    "6  (BC_1, M2_ON_OFF, input,    X)," &    
+    "5  (BC_1, ICE_LED1,  input,    X)," &    
+    "4  (BC_1, ICE_LED2,  input,    X)," &    
+    "3  (BC_1, ICE_LED3,  input,    X)," &    
+    "2  (BC_1, ICE_LED4,  input,    X)," &    
+    "1  (BC_2, LORA_DIO1, input,    X)," &        
+    "0  (BC_2, LORA_BUSY, input,    X)";
+
+end TP1_laRVa;

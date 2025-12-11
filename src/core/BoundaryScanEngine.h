@@ -48,6 +48,9 @@ namespace JTAG {
         const std::vector<uint8_t>& getBSR() const { return bsr; }
         bool setBSR(const std::vector<uint8_t>& data);
 
+        // Target detection - checks if BSR is all 0xFF (no target / pull-ups)
+        bool isNoTargetDetected() const;
+
     private:
         TAPState getNextState(TAPState current, bool tms) const;
 

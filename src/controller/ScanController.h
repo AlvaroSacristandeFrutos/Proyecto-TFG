@@ -79,13 +79,12 @@ namespace JTAG {
 
         // Catálogo BSDL
         bool initializeBSDLCatalog(const std::string& directory);
-        bool autoLoadBSDL();
-
-        // DEBUG: Obtener tamaño del catálogo
-        size_t getCatalogSize() const { return bsdlCatalog ? bsdlCatalog->size() : 0; }
 
         // NUEVO: Exponer DeviceModel para visualización
         const DeviceModel* getDeviceModel() const { return deviceModel.get(); }
+
+        // Target detection - check if BSR shows no target (all 0xFF)
+        bool isNoTargetDetected() const;
 
         // Threading control
         void startPolling();
@@ -106,6 +105,9 @@ namespace JTAG {
         void onWorkerError(QString message);
 
     private:
+        // Helper methods
+        void createMockDeviceModel();  // Auto-genera modelo para MockAdapter
+
         std::unique_ptr<IJTAGAdapter> adapter;
         std::unique_ptr<BoundaryScanEngine> engine;
         std::unique_ptr<DeviceModel> deviceModel;
@@ -121,3 +123,6 @@ namespace JTAG {
     };
 
 } // namespace JTAG
+
+// Nota: std::vector<JTAG::PinLevel> ya está registrado en ScanWorker.h
+// pero lo declaramos aquí también por si se incluye este header independientemente

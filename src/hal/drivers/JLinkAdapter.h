@@ -51,8 +51,9 @@ namespace JTAG {
         bool setClockSpeed(uint32_t speedHz) override;
         std::string getInfo() const override;
 
-        // M�todo est�tico para detecci�n
+        // Métodos estáticos para detección
         static bool isLibraryAvailable();
+        static bool isDeviceConnected();  // Detecta dispositivo USB físico
 
     private:
         bool connected = false;

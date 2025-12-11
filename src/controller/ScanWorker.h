@@ -7,6 +7,8 @@
 #include <mutex>
 #include <map>
 #include "../core/BoundaryScanEngine.h"
+#include "../bsdl/DeviceModel.h"
+
 
 namespace JTAG {
 
@@ -14,7 +16,7 @@ class ScanWorker : public QObject {
     Q_OBJECT
 
 public:
-    explicit ScanWorker(BoundaryScanEngine* engine, QObject* parent = nullptr);
+    explicit ScanWorker(BoundaryScanEngine* engine, DeviceModel* model, QObject* parent = nullptr);
     ~ScanWorker();
 
     // Control desde GUI thread
@@ -41,6 +43,7 @@ private:
     void switchToSAMPLE();
 
     BoundaryScanEngine* engine;
+    DeviceModel* deviceModel;
     std::atomic<bool> running{false};
     std::atomic<int> pollIntervalMs{100};
 
@@ -52,3 +55,6 @@ private:
 };
 
 } // namespace JTAG
+
+// Registrar el tipo para señales Qt cross-thread
+Q_DECLARE_METATYPE(std::vector<JTAG::PinLevel>)

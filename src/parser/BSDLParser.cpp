@@ -146,6 +146,16 @@ bool BSDLParser::parse(const std::string& filename) {
         }
     }
 
+    if (auto pos = content.find("INSTRUCTION_LENGTH"); pos != std::string_view::npos) {
+        auto start = content.find("IS", pos);
+        auto end = content.find(";", pos);
+        if (start != std::string_view::npos && end != std::string_view::npos) {
+            auto numSv = trim(content.substr(start + 2, end - (start + 2)));
+            // Convertir string a int
+            std::from_chars(numSv.data(), numSv.data() + numSv.size(), data.instructionLength);
+        }
+    }
+
     // 5. INSTRUCTION OPCODE
     if (auto pos = content.find("INSTRUCTION_OPCODE"); pos != std::string_view::npos) {
         auto startQuote = content.find('"', pos);

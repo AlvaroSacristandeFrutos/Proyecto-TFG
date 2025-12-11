@@ -7,6 +7,14 @@ project(JtagScannerQt LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Configuración de build type por defecto
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the type of build." FORCE)
+    # Valores posibles: Debug, Release, RelWithDebInfo, MinSizeRel
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "RelWithDebInfo" "MinSizeRel")
+endif()
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+
 # Configuración Qt Automática
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
@@ -23,7 +31,8 @@ include_directories(src)
 file(GLOB_RECURSE PROJECT_SOURCES "src/*.cpp" "src/*.h" "src/*.ui")
 
 # --- CREAR EJECUTABLE ---
-add_executable(JtagScannerQt WIN32 ${PROJECT_SOURCES})
+# TEMPORAL: Comentado WIN32 para ver logs de std::cout en consola
+add_executable(JtagScannerQt ${PROJECT_SOURCES})
 
 # --- LINKADO ---
 target_link_libraries(JtagScannerQt PRIVATE Qt6::Widgets Qt6::Core Qt6::Gui Qt6::SerialPort)

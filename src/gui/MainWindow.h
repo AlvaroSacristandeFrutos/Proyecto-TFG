@@ -121,6 +121,15 @@ private slots:
     void onPinsDataReady(std::vector<JTAG::PinLevel> pins);
     void onScanError(QString message);
 
+    // JTAG Mode selection slots
+    void onJTAGModeChanged(int modeId);
+
+    // Quick action button slots
+    void onSetAllToSafeState();
+    void onSetAllTo1();
+    void onSetAllToZ();
+    void onSetAllTo0();
+
 private:
     Ui::MainWindow *ui;
     
@@ -136,6 +145,18 @@ private:
     // Toolbar widgets
     QComboBox *zoomComboBox;
 
+    // JTAG Mode selector widgets
+    class QRadioButton *radioSample;
+    class QRadioButton *radioExtest;
+    class QRadioButton *radioBypass;
+    class QButtonGroup *jtagModeButtonGroup;
+
+    // Quick action buttons
+    class QPushButton *btnSetAllSafe;
+    class QPushButton *btnSetAll1;
+    class QPushButton *btnSetAllZ;
+    class QPushButton *btnSetAll0;
+
     // Action group for IN/OUT of inout radio buttons
     QActionGroup *inoutActionGroup;
 
@@ -146,6 +167,10 @@ private:
     bool isAdapterConnected;
     bool isDeviceDetected;
     bool isDeviceInitialized;
+
+    // JTAG Mode state
+    enum class JTAGMode { SAMPLE, EXTEST, BYPASS };
+    JTAGMode currentJTAGMode;
     
     // Waveform capture state
     bool isCapturing;
