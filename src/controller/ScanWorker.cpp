@@ -31,7 +31,6 @@ namespace JTAG {
 
     void ScanWorker::setScanMode(ScanMode mode) {
         currentMode = mode;
-        // Forzamos que la siguiente iteración detecte el cambio
     }
 
     void ScanWorker::markDirtyPin(size_t cellIndex, PinLevel level) {
@@ -44,11 +43,13 @@ namespace JTAG {
         return !dirtyPins.empty();
     }
 
+    // --------------------------------------------------------------------------
+    // LÓGICA PRINCIPAL DEL HILO
+    // --------------------------------------------------------------------------
     void ScanWorker::run() {
         qDebug() << "[ScanWorker] Thread started";
 
-        // Al iniciar, asumimos que el chip no tiene instrucción cargada
-        lastAppliedMode = ScanMode::SAMPLE; // Valor inicial
+        ScanMode lastMode = ScanMode::SAMPLE;
         bool firstRun = true;
 
         while (running) {
@@ -60,56 +61,63 @@ namespace JTAG {
 
                 ScanMode targetMode = currentMode.load();
 
-                // 1. GESTIÓN DE CAMBIO DE MODO O REFRESCO
-                // Si cambiamos de modo, o si estamos en SAMPLE (para recargar por seguridad), cargamos la instrucción.
-                // NOTA: En EXTEST/INTEST no recargamos la instrucción en cada ciclo para no "parpadear" los pines,
-                // salvo que el modo haya cambiado.
-                if (targetMode != lastAppliedMode || targetMode == ScanMode::SAMPLE || firstRun) {
-                    applyMode(targetMode);
-                    lastAppliedMode = targetMode;
-                    firstRun = false;
+                // 1. CARGA DE INSTRUCCIÓN (Persistente)
+                // Cargamos la instrucción en cada ciclo para asegurar que el chip
+                // no se ha escapado a IDCODE o System Mode por ruido.
+                // Al haber quitado el Reset del adaptador, esto es seguro y no parpadea.
+
+                std::string instrName = "SAMPLE"; // Default
+                if (targetMode == ScanMode::EXTEST) instrName = "EXTEST";
+                if (targetMode == ScanMode::BYPASS) instrName = "BYPASS";
+
+                uint32_t opcode = deviceModel->getInstruction(instrName);
+
+                // Fallback para SAMPLE
+                if (opcode == 0xFFFFFFFF && targetMode == ScanMode::SAMPLE)
+                    opcode = deviceModel->getInstruction("SAMPLE/PRELOAD");
+
+                size_t irLen = deviceModel->getIRLength();
+
+                // Recargamos la instrucción
+                if (!engine->loadInstruction(opcode, irLen)) {
+                    // Error silencioso para no saturar logs
                 }
 
-                // 2. LÓGICA DE ESCRITURA (Solo para EXTEST / INTEST)
-                if (targetMode == ScanMode::EXTEST || targetMode == ScanMode::INTEST) {
-                    // Si hay cambios pendientes, actualizamos el BSR en memoria
+                // 2. EJECUCIÓN DEL MODO
+                if (targetMode == ScanMode::EXTEST) {
+                    // A) Procesar nuevos cambios de la GUI (si los hay)
                     if (hasDirtyPins()) {
                         processDirtyPins();
                     }
-                    // EN EXTEST SIEMPRE ESCRIBIMOS (applyChanges) para mantener los pines estables
-                    // applyChanges() hace: Shift-DR con los datos de salida
+
+                    // B) [CRÍTICO] RESTAURAR SALIDAS FORZADAS
+                    // Antes de enviar, re-aplicamos nuestros deseos guardados sobre el BSR.
+                    // Esto evita que la lectura anterior ("0") nos borre el "1" que queremos mantener.
+                    for (const auto& [cell, level] : desiredOutputs) {
+                        engine->setPin(cell, level);
+                    }
+
+                    // C) Enviar datos (Shift-DR)
+                    // Esto escribe los valores en el chip y mantiene el LED encendido
                     if (!engine->applyChanges()) {
                         emit errorOccurred("Failed to apply changes in EXTEST");
                     }
                 }
-                // 3. LÓGICA DE LECTURA (SAMPLE)
-                else if (targetMode == ScanMode::SAMPLE) {
-                    // En SAMPLE solo leemos
-                    if (!engine->samplePins()) {
-                        emit errorOccurred("Failed to sample pins");
-                    }
-                }
-                // 4. BYPASS
-                else if (targetMode == ScanMode::BYPASS) {
-                    // En Bypass podríamos hacer un test de integridad
-                    // De momento no hacemos nada o leemos 1 bit dummy
-                    // engine->runTestCycles(1);
+                else {
+                    // Modo SAMPLE (Solo lectura)
+                    engine->samplePins();
                 }
 
-                // 5. REPORTAR DATOS A GUI
-                // Incluso en EXTEST, applyChanges() nos devuelve lo que había en la entrada (sampled inputs)
-                // Así que siempre podemos actualizar la GUI.
-                if (targetMode != ScanMode::BYPASS) {
-                    std::vector<PinLevel> pins;
-                    size_t bsrLen = engine->getBSRLength();
-                    pins.reserve(bsrLen);
+                // 3. ACTUALIZAR GUI
+                std::vector<PinLevel> pins;
+                size_t bsrLen = engine->getBSRLength();
+                pins.reserve(bsrLen);
 
-                    for (size_t i = 0; i < bsrLen; ++i) {
-                        auto level = engine->getPin(i);
-                        pins.push_back(level.value_or(PinLevel::HIGH_Z));
-                    }
-                    emit pinsUpdated(pins);
+                for (size_t i = 0; i < bsrLen; ++i) {
+                    auto level = engine->getPin(i);
+                    pins.push_back(level.value_or(PinLevel::HIGH_Z));
                 }
+                emit pinsUpdated(pins);
 
             }
             catch (const std::exception& e) {
@@ -120,44 +128,29 @@ namespace JTAG {
         }
 
         qDebug() << "[ScanWorker] Thread stopped";
-    }
+    } // <--- ESTA LLAVE CIERRA LA FUNCIÓN RUN()
+
+    // --------------------------------------------------------------------------
+    // FUNCIONES AUXILIARES (FUERA DE RUN)
+    // --------------------------------------------------------------------------
 
     void ScanWorker::processDirtyPins() {
         std::lock_guard<std::mutex> lock(dirtyMutex);
         for (const auto& [cellIndex, level] : dirtyPins) {
+            // 1. Guardamos en el Engine (para el ciclo actual)
             engine->setPin(cellIndex, level);
+
+            // 2. Guardamos en nuestra Memoria Persistente (para ciclos futuros)
+            // Esto es vital para que applyChanges no borre el valor en la siguiente vuelta
+            desiredOutputs[cellIndex] = level;
         }
         dirtyPins.clear();
     }
 
+    // Función auxiliar (aunque ahora hacemos la carga en el bucle, la mantenemos por compatibilidad)
     void ScanWorker::applyMode(ScanMode mode) {
-        if (!deviceModel) return;
-
-        std::string instrName;
-        switch (mode) {
-        case ScanMode::SAMPLE: instrName = "SAMPLE"; break;
-        case ScanMode::EXTEST: instrName = "EXTEST"; break;
-        case ScanMode::INTEST: instrName = "INTEST"; break;
-        case ScanMode::BYPASS: instrName = "BYPASS"; break;
-        }
-
-        uint32_t opcode = deviceModel->getInstruction(instrName);
-
-        // Fallback común para SAMPLE
-        if (mode == ScanMode::SAMPLE && opcode == 0xFFFFFFFF) {
-            opcode = deviceModel->getInstruction("SAMPLE/PRELOAD");
-        }
-
-        if (opcode == 0xFFFFFFFF) {
-            qWarning() << "[ScanWorker] Instruction not found in BSDL:" << QString::fromStdString(instrName);
-            return;
-        }
-
-        size_t irLen = deviceModel->getIRLength();
-        qDebug() << "[ScanWorker] Switching to" << QString::fromStdString(instrName)
-            << "(Opcode:" << Qt::hex << opcode << ")";
-
-        engine->loadInstruction(opcode, irLen);
+        // La lógica real está ahora integrada en run() para mayor robustez
+        Q_UNUSED(mode);
     }
 
 } // namespace JTAG

@@ -51,6 +51,7 @@ namespace JTAG {
     private:
         void processDirtyPins();
 
+
         // Funciones de conmutación de bajo nivel
         void applyMode(ScanMode mode);
 
@@ -66,6 +67,7 @@ namespace JTAG {
 
         mutable std::mutex dirtyMutex;
         std::map<size_t, PinLevel> dirtyPins;
+        std::map<size_t, PinLevel> desiredOutputs;
     };
 
 } // namespace JTAG

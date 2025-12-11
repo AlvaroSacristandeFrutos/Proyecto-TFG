@@ -375,40 +375,33 @@ namespace JTAG {
         std::vector<uint8_t>& dataOut) {
         if (!connected) return false;
 
-        std::cout << "[JLink] scanIR() - irLength: " << (int)irLength << "\n";
+        // std::cout << "[JLink] scanIR() - irLength: " << (int)irLength << "\n";
 
-        // --- CORRECCIÓN ROBUSTA ---
-        // 1. Resetear TAP completamente para salir de estados desconocidos.
-        //    Secuencia: 5 unos (Reset) + 1 cero (Idle)
-        std::vector<bool> resetSeq = { true, true, true, true, true, false };
-        if (!writeTMS(resetSeq)) {
-            std::cerr << "[JLink] ERROR: Failed to reset TAP in scanIR\n";
-            return false;
-        }
+        // --- CORRECCIÓN: NAVEGACIÓN SEGURA (SIN RESET) ---
+        // En lugar de resetear (que mata el EXTEST), usamos un '0' inicial.
+        // Si estamos en RESET, '0' nos lleva a IDLE.
+        // Si estamos en IDLE, '0' nos mantiene en IDLE.
+        // Secuencia: Idle(0) -> SelectDR(1) -> SelectIR(1) -> CaptureIR(0) -> ShiftIR(0)
 
-        // 2. Navegar a Shift-IR desde Idle
-        //    Idle(0) -> Select-DR(1) -> Select-IR(1) -> Capture-IR(0) -> Shift-IR(0)
         std::vector<bool> toShiftIR = { false, true, true, false, false };
+
         if (!writeTMS(toShiftIR)) {
             std::cerr << "[JLink] ERROR: Failed to navigate to Shift-IR\n";
             return false;
         }
 
-        // 3. Desplazar datos (Shift IR)
+        // Shift IR data
         size_t byteCount = (irLength + 7) / 8;
         dataOut.resize(byteCount);
-        // exitShift=true nos lleva a Exit1-IR
         if (!shiftData(dataIn, dataOut, irLength, true)) {
             std::cerr << "[JLink] ERROR: Failed to shift IR data\n";
             return false;
         }
 
-        // 4. Volver a Idle
-        //    Exit1-IR -> Update-IR(1) -> Run-Test/Idle(0)
+        // Volver a Idle
         std::vector<bool> toIdle = { true, false };
         if (!writeTMS(toIdle)) return false;
 
-        std::cout << "[JLink] scanIR() - SUCCESS\n";
         return true;
     }
 
