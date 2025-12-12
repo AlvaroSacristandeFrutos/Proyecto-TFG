@@ -2,6 +2,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QDebug>
 
 ControlPanelWidget::ControlPanelWidget(QWidget *parent)
     : QWidget(parent)
@@ -84,7 +85,10 @@ QWidget* ControlPanelWidget::createRadioButtonWidget(const std::string& pinName)
 
     // Conectar señal (guardar pinName en property del widget)
     widget->setProperty("pinName", QString::fromStdString(pinName));
-    connect(group, QOverload<int>::of(&QButtonGroup::idClicked),
+
+    // Usar idToggled en vez de idClicked para radio buttons
+    // idToggled se dispara cuando cambia el estado checked/unchecked
+    connect(group, QOverload<int, bool>::of(&QButtonGroup::idToggled),
             this, &ControlPanelWidget::onRadioButtonToggled);
 
     return widget;
@@ -149,29 +153,62 @@ std::string ControlPanelWidget::getSelectedPin() const
     return item ? item->text().toStdString() : "";
 }
 
-void ControlPanelWidget::onRadioButtonToggled(int buttonId)
+void ControlPanelWidget::onRadioButtonToggled(int buttonId, bool checked)
 {
+    // idToggled se dispara DOS veces: una para el botón que se desmarca (checked=false)
+    // y otra para el botón que se marca (checked=true)
+    // Solo procesamos cuando checked=true para evitar duplicados
+    if (!checked) {
+        qDebug() << "[ControlPanel] Button unchecked, ignoring (buttonId:" << buttonId << ")";
+        return;
+    }
+
     // Obtener nombre del pin desde el widget que emitió la señal
     QButtonGroup* group = qobject_cast<QButtonGroup*>(sender());
-    if (!group) return;
+    if (!group) {
+        qDebug() << "[ControlPanel] ERROR: sender is not QButtonGroup";
+        return;
+    }
 
     QWidget* widget = qobject_cast<QWidget*>(group->parent());
-    if (!widget) return;
+    if (!widget) {
+        qDebug() << "[ControlPanel] ERROR: parent is not QWidget";
+        return;
+    }
 
     QString pinName = widget->property("pinName").toString();
-    if (pinName.isEmpty()) return;
+    if (pinName.isEmpty()) {
+        qDebug() << "[ControlPanel] ERROR: pinName property is empty";
+        return;
+    }
 
     // Convertir buttonId a PinLevel
     JTAG::PinLevel level;
+    QString levelStr;
     switch (buttonId) {
-        case 0: level = JTAG::PinLevel::LOW; break;
-        case 1: level = JTAG::PinLevel::HIGH; break;
-        case 2: level = JTAG::PinLevel::HIGH_Z; break;
-        default: return;
+        case 0:
+            level = JTAG::PinLevel::LOW;
+            levelStr = "LOW (0)";
+            break;
+        case 1:
+            level = JTAG::PinLevel::HIGH;
+            levelStr = "HIGH (1)";
+            break;
+        case 2:
+            level = JTAG::PinLevel::HIGH_Z;
+            levelStr = "HIGH_Z (Z)";
+            break;
+        default:
+            qDebug() << "[ControlPanel] ERROR: invalid buttonId" << buttonId;
+            return;
     }
 
-    // Emitir señal
-    emit pinValueChanged(pinName.toStdString(), level);
+    qDebug() << "[ControlPanel] Radio button toggled - Pin:" << pinName
+             << "Level:" << levelStr << "ButtonId:" << buttonId << "Checked:" << checked;
+
+    // Emitir señal (usando QString directamente, no std::string)
+    emit pinValueChanged(pinName, level);
+    qDebug() << "[ControlPanel] Signal emitted for pin:" << pinName;
 }
 
 int ControlPanelWidget::findPinRow(const std::string& pinName) const

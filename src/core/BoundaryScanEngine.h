@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <cstddef> // Para size_t
+#include <QMetaType> // Para Q_DECLARE_METATYPE
 // -----------------------------
 
 #include "../hal/IJTAGAdapter.h"
@@ -87,3 +88,6 @@ namespace JTAG {
     };
 
 } // namespace JTAG
+
+// Declarar JTAG::PinLevel como metatype para Qt signals/slots
+Q_DECLARE_METATYPE(JTAG::PinLevel)

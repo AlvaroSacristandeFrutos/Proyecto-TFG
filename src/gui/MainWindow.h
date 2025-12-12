@@ -132,7 +132,7 @@ private slots:
     void onSetAllTo0();
 
     // Control Panel slot
-    void onControlPanelPinChanged(std::string pinName, JTAG::PinLevel level);
+    void onControlPanelPinChanged(QString pinName, JTAG::PinLevel level);
 
 private:
     Ui::MainWindow *ui;

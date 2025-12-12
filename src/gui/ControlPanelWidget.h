@@ -36,10 +36,10 @@ public:
 
 signals:
     // Emitido cuando usuario cambia valor de un pin
-    void pinValueChanged(std::string pinName, JTAG::PinLevel level);
+    void pinValueChanged(QString pinName, JTAG::PinLevel level);
 
 private slots:
-    void onRadioButtonToggled(int buttonId);
+    void onRadioButtonToggled(int buttonId, bool checked);
 
 private:
     QTableWidget* table;

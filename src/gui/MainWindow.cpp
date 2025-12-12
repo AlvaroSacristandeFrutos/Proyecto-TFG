@@ -12,6 +12,9 @@
 #include <QButtonGroup>
 #include <QPushButton>
 #include <QLabel>
+#include <QDir>
+#include <QStringList>
+#include <QTimer>
 #include <iostream>
 #include <iomanip>
 #include <QMetaType>
@@ -50,17 +53,16 @@ MainWindow::MainWindow(QWidget *parent)
     , waveformTimebase(1.0)
 {
     ui->setupUi(this);
-    
+
     qRegisterMetaType<std::vector<JTAG::PinLevel>>("std::vector<JTAG::PinLevel>");
+    qRegisterMetaType<JTAG::PinLevel>("JTAG::PinLevel");
 
     initializeUI();
     setupGraphicsViews();
     setupTables();
     setupToolbar();
-    setupBackend();
-    setupConnections();
 
-    // Crear Control Panel y reemplazar tableWidgetWatch
+    // Crear Control Panel ANTES de setupConnections() para poder conectar la señal
     controlPanel = new ControlPanelWidget(this);
 
     // Reemplazar widget en dockWatch
@@ -71,6 +73,9 @@ MainWindow::MainWindow(QWidget *parent)
     // Hide Watch panel by default
     ui->dockWatch->setVisible(false);
     ui->actionWatch->setChecked(false);
+
+    setupBackend();
+    setupConnections();  // Ahora controlPanel YA existe cuando conectamos
     
     updateWindowTitle();
     enableControlsAfterConnection(false);
@@ -110,9 +115,34 @@ void MainWindow::setupBackend()
             this, &MainWindow::onScanError);
     // ===================================================================
 
-    // Inicializar catálogo BSDL
-    QString testFilesPath = QCoreApplication::applicationDirPath() + "/../../test_files";
+    // DESHABILITADO: Inicialización del catálogo BSDL (causa lentitud al inicio)
+    // El catálogo se cargará bajo demanda cuando se detecte un dispositivo
+    // o cuando el usuario cargue manualmente un BSDL
+    /*
+    // Buscar test_files en varios paths posibles
+    QStringList possiblePaths = {
+        QCoreApplication::applicationDirPath() + "/../../test_files",  // build/Debug
+        QCoreApplication::applicationDirPath() + "/../../../test_files", // out/build/debug
+        "C:/Proyecto/BoundaryScanner/test_files" // Fallback absoluto
+    };
+
+    QString testFilesPath;
+    for (const QString& path : possiblePaths) {
+        QDir dir(path);
+        if (dir.exists()) {
+            testFilesPath = dir.absolutePath();
+            qDebug() << "[MainWindow] Found test_files at:" << testFilesPath;
+            break;
+        }
+    }
+
+    if (testFilesPath.isEmpty()) {
+        qDebug() << "[MainWindow] WARNING: test_files directory not found!";
+        testFilesPath = QCoreApplication::applicationDirPath() + "/../../test_files"; // Usar default
+    }
+
     scanController->initializeBSDLCatalog(testFilesPath.toStdString());
+    */
 
     // NOTA: El polling ahora lo maneja ScanWorker en thread separado
     // El worker emite señales que llegan aquí vía las conexiones de arriba
@@ -382,8 +412,11 @@ void MainWindow::setupConnections()
 
     // Control Panel connection
     if (controlPanel) {
-        connect(controlPanel, &ControlPanelWidget::pinValueChanged,
-                this, &MainWindow::onControlPanelPinChanged);
+        bool connected = connect(controlPanel, &ControlPanelWidget::pinValueChanged,
+                                this, &MainWindow::onControlPanelPinChanged);
+        qDebug() << "[MainWindow::setupConnections] Control Panel signal connected:" << connected;
+    } else {
+        qDebug() << "[MainWindow::setupConnections] ERROR: controlPanel is null!";
     }
 }
 
@@ -541,7 +574,7 @@ void MainWindow::onJTAGConnection()
         JTAG::AdapterType selectedType = dialog.getSelectedAdapter();
         uint32_t clockSpeed = dialog.getSelectedClockSpeed();
 
-        // 3. Conectar (SIN auto-detección)
+        // 3. Conectar y detectar dispositivo automáticamente
         if (scanController->connectAdapter(selectedType, clockSpeed)) {
             isAdapterConnected = true;
 
@@ -559,6 +592,64 @@ void MainWindow::onJTAGConnection()
                 .arg(clockSpeed));
 
             enableControlsAfterConnection(true);
+
+            // Detectar dispositivo automáticamente
+            QTimer::singleShot(500, this, [this]() {
+                uint32_t idcode = scanController->detectDevice();
+
+                if (idcode != 0 && idcode != 0xFFFFFFFF) {
+                    isDeviceDetected = true;
+
+                    // Decodificar IDCODE
+                    uint8_t version = (idcode >> 28) & 0xF;
+                    uint16_t partNumber = (idcode >> 12) & 0xFFFF;
+                    uint16_t manufacturer = (idcode >> 1) & 0x7FF;
+
+                    // Crear mensaje
+                    QString message = QString(
+                        "<b style='font-size:14pt;'>Device Detected</b><br><br>"
+                        "<b>IDCODE:</b> 0x%1<br><br>"
+                        "<b>Manufacturer ID:</b> 0x%2<br>"
+                        "<b>Part Number:</b> 0x%3<br>"
+                        "<b>Version:</b> 0x%4"
+                    )
+                    .arg(idcode, 8, 16, QChar('0'))
+                    .arg(manufacturer, 3, 16, QChar('0'))
+                    .arg(partNumber, 4, 16, QChar('0'))
+                    .arg(version, 1, 16);
+
+                    // Crear popup temporal (con botón OK para cerrar manualmente)
+                    QMessageBox* msgBox = new QMessageBox(this);
+                    msgBox->setWindowTitle("JTAG Device Detection");
+                    msgBox->setText(message);
+                    msgBox->setIcon(QMessageBox::Information);
+                    msgBox->setStandardButtons(QMessageBox::Ok);
+                    msgBox->setAttribute(Qt::WA_DeleteOnClose);
+
+                    // Configurar timer para auto-cerrar
+                    QTimer* autoCloseTimer = new QTimer(msgBox);
+                    autoCloseTimer->setSingleShot(true);
+                    connect(autoCloseTimer, &QTimer::timeout, msgBox, &QMessageBox::close);
+                    autoCloseTimer->start(5000);
+
+                    // Si el usuario cierra manualmente, cancelar el timer
+                    connect(msgBox, &QMessageBox::finished, autoCloseTimer, &QTimer::stop);
+
+                    msgBox->show();
+
+                    // Actualizar combo
+                    ui->comboBoxDevice->clear();
+                    ui->comboBoxDevice->addItem(
+                        QString("Device 0x%1").arg(idcode, 8, 16, QChar('0')));
+
+                    updateStatusBar(QString("Device detected - IDCODE: 0x%1")
+                        .arg(idcode, 8, 16, QChar('0')));
+
+                    // TODO: Decidir si lanzar New Project Wizard automáticamente
+                    // Actualmente comentado - el usuario debe cargarlo manualmente
+                    // QTimer::singleShot(5500, this, &MainWindow::onNewProjectWizard);
+                }
+            });
         } else {
             // Mensaje de error detallado según el tipo de adaptador
             QString errorMsg = "Failed to connect to adapter.\n\n";
@@ -656,12 +747,65 @@ void MainWindow::onRun()
 
 void MainWindow::onJTAGReset()
 {
-    if (scanController && isAdapterConnected) {
-        if (scanController->reset()) {
-            updateStatusBar("JTAG TAP reset successful");
-        } else {
-            QMessageBox::critical(this, "Error", "JTAG reset failed");
+    if (!scanController) {
+        QMessageBox::warning(this, "No Controller", "ScanController not initialized");
+        return;
+    }
+
+    // Confirmar acción
+    QMessageBox::StandardButton reply = QMessageBox::question(
+        this,
+        "JTAG Reset",
+        "This will disconnect the adapter and unload the BSDL file.\n\n"
+        "Do you want to continue?",
+        QMessageBox::Yes | QMessageBox::No
+    );
+
+    if (reply == QMessageBox::Yes) {
+        // Detener polling si está activo
+        if (isCapturing) {
+            scanController->stopPolling();
+            isCapturing = false;
+            ui->actionRun->setText("Run");
         }
+
+        // Desconectar adapter y descargar BSDL
+        scanController->disconnectAdapter();
+
+        // Actualizar estado de la UI
+        isAdapterConnected = false;
+        isDeviceDetected = false;
+        isDeviceInitialized = false;
+
+        // Limpiar controles
+        ui->comboBoxDevice->clear();
+        ui->tableWidgetPins->setRowCount(0);
+
+        if (controlPanel) {
+            controlPanel->removeAllPins();
+            ui->dockWatch->setVisible(false);
+        }
+
+        // Resetear visualización del chip (limpiar escena completamente)
+        if (chipVisualizer) {
+            chipVisualizer->scene()->clear();
+            chipVisualizer->update();
+        }
+
+        // Deshabilitar controles
+        enableControlsAfterConnection(false);
+
+        // Resetear modo JTAG a SAMPLE
+        if (radioSample) {
+            radioSample->setChecked(true);
+        }
+        currentJTAGMode = JTAGMode::SAMPLE;
+
+        updateStatusBar("JTAG Reset: Adapter disconnected, BSDL unloaded");
+
+        QMessageBox::information(this, "JTAG Reset Complete",
+            "Adapter disconnected and BSDL unloaded successfully.\n\n"
+            "You can now connect a new adapter or device.");
     }
 }
 
@@ -1612,19 +1756,16 @@ void MainWindow::renderChipVisualization()
 
 void MainWindow::updateControlPanel(const std::vector<JTAG::PinLevel>& pinLevels)
 {
-    if (!controlPanel || !scanController) return;
-    if (!ui->dockWatch->isVisible()) return;  // No actualizar si está oculto
+    // El Control Panel es SOLO para edición del usuario en modos EXTEST/INTEST
+    // NO debe actualizarse automáticamente desde el backend, ya que eso
+    // sobreescribiría las selecciones del usuario en los radio buttons
 
-    // Solo actualizar en modos de solo lectura (SAMPLE)
-    // En EXTEST/INTEST, el usuario controla los valores
-    if (currentJTAGMode == JTAGMode::EXTEST || currentJTAGMode == JTAGMode::INTEST) {
-        return;  // No sobrescribir ediciones del usuario
-    }
+    // El flujo correcto es:
+    // Usuario cambia radio button → emit pinValueChanged → setPinAsync →
+    // backend actualiza → GUI mantiene el valor seleccionado por el usuario
 
-    // En modo SAMPLE, no hacemos nada aquí porque el Control Panel
-    // no se muestra en SAMPLE (está oculto).
-    // El Control Panel solo es visible en EXTEST/INTEST donde el usuario
-    // controla los valores mediante radio buttons, no desde el backend.
+    // Por tanto, este método NO hace nada intencionalmente
+    Q_UNUSED(pinLevels);
 }
 
 void MainWindow::captureWaveformSample()
@@ -1859,9 +2000,29 @@ void MainWindow::onJTAGModeChanged(int modeId)
     if (controlPanel) {
         ui->dockWatch->setVisible(showControlPanel);
         controlPanel->setEnabled(enableControlPanel);
+
+        // Auto-poblar Control Panel con pines editables al entrar en EXTEST/INTEST
+        if (showControlPanel && enableControlPanel && scanController) {
+            controlPanel->removeAllPins();  // Limpiar primero
+
+            auto pinList = scanController->getPinList();
+            for (const auto& pinName : pinList) {
+                std::string type = scanController->getPinType(pinName);
+                // Solo añadir pines editables (OUTPUT y INOUT)
+                if (type == "OUTPUT" || type == "INOUT" || type == "output2" || type == "inout2") {
+                    std::string pinNumber = scanController->getPinNumber(pinName);
+                    controlPanel->addPin(pinName, pinNumber);
+                }
+            }
+
+            updateStatusBar(QString("Mode changed to %1 - Control Panel populated with editable pins").arg(modeName));
+        } else {
+            updateStatusBar(QString("Mode changed to %1").arg(modeName));
+        }
+    } else {
+        updateStatusBar(QString("Mode changed to %1").arg(modeName));
     }
 
-    updateStatusBar(QString("Mode changed to %1").arg(modeName));
     updatePinsTable(); // Refrescar para habilitar/deshabilitar edición
 }
 
@@ -1939,15 +2100,27 @@ void MainWindow::onSetAllTo0()
     updatePinsTable();
 }
 
-void MainWindow::onControlPanelPinChanged(std::string pinName, JTAG::PinLevel level)
+void MainWindow::onControlPanelPinChanged(QString pinName, JTAG::PinLevel level)
 {
-    if (!scanController) return;
+    QString levelStr = (level == JTAG::PinLevel::LOW) ? "0" :
+                       (level == JTAG::PinLevel::HIGH) ? "1" : "Z";
+
+    qDebug() << "[MainWindow] Control panel pin changed - Pin:" << pinName
+             << "Level:" << levelStr;
+
+    if (!scanController) {
+        qDebug() << "[MainWindow] ERROR: scanController is null";
+        return;
+    }
+
+    // Convertir QString a std::string para el backend
+    std::string pinNameStd = pinName.toStdString();
 
     // Llamar al backend de forma asíncrona
-    scanController->setPinAsync(pinName, level);
+    qDebug() << "[MainWindow] Calling setPinAsync for pin:" << pinName;
+    scanController->setPinAsync(pinNameStd, level);
 
     updateStatusBar(QString("Pin %1 set to %2")
-        .arg(QString::fromStdString(pinName))
-        .arg(level == JTAG::PinLevel::LOW ? "0" :
-             level == JTAG::PinLevel::HIGH ? "1" : "Z"));
+        .arg(pinName)
+        .arg(levelStr));
 }
