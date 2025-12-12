@@ -140,15 +140,48 @@ namespace JTAG {
     bool ScanController::initialize() {
         if (!adapter || !deviceModel || !engine) return false;
 
+        // Reset TAP a estado conocido
         if (!engine->reset()) return false;
 
-        engine->loadInstruction(deviceModel->getInstruction("SAMPLE"));
-        engine->samplePins();
+        // ========== SECUENCIA IEEE 1149.1 (Solución A) ==========
 
-        engine->loadInstruction(deviceModel->getInstruction("EXTEST"));
+        // Paso 1: Cargar instrucción SAMPLE/PRELOAD
+        uint32_t sampleInstr = deviceModel->getInstruction("SAMPLE/PRELOAD");
+        if (sampleInstr == 0xFFFFFFFF) {
+            // Fallback si no existe SAMPLE/PRELOAD
+            sampleInstr = deviceModel->getInstruction("SAMPLE");
+        }
 
-        // Hacer un sample adicional para tener valores iniciales en el BSR
-        engine->samplePins();
+        if (!engine->loadInstruction(sampleInstr, deviceModel->getIRLength())) {
+            std::cerr << "[ScanController] Failed to load SAMPLE/PRELOAD instruction\n";
+            return false;
+        }
+
+        // Paso 2: Sample para capturar estado actual seguro
+        if (!engine->samplePins()) {
+            std::cerr << "[ScanController] Failed to sample pins\n";
+            return false;
+        }
+
+        // Paso 3: Precargar esos valores en el registro de actualización
+        // (sin cambiar pines físicos, porque estamos en SAMPLE/PRELOAD)
+        if (!engine->preloadBSR()) {
+            std::cerr << "[ScanController] Failed to preload BSR\n";
+            return false;
+        }
+
+        // Paso 4: Cargar instrucción EXTEST
+        // Los pines tomarán los valores precargados de forma segura
+        uint32_t extestInstr = deviceModel->getInstruction("EXTEST");
+        if (!engine->loadInstruction(extestInstr, deviceModel->getIRLength())) {
+            std::cerr << "[ScanController] Failed to load EXTEST instruction\n";
+            return false;
+        }
+
+        // NO ejecutar samplePins() o applyChanges() aquí
+        // El worker lo hará en su primer ciclo
+
+        // ========== FIN SECUENCIA IEEE 1149.1 ==========
 
         // Crear worker y moverlo al thread
         scanWorker = new ScanWorker(engine.get(), deviceModel.get());
@@ -196,40 +229,29 @@ namespace JTAG {
 
     std::optional<PinLevel> ScanController::getPin(const std::string& pinName) const {
         if (!deviceModel || !engine) {
-            qDebug() << "[ScanController::getPin] ERROR: deviceModel or engine is NULL";
             return std::nullopt;
         }
 
         auto pinInfo = deviceModel->getPinInfo(pinName);
         if (!pinInfo) {
-            qDebug() << "[ScanController::getPin] ERROR: No pinInfo for" << QString::fromStdString(pinName);
             return std::nullopt;
         }
 
-        // DEBUG: Primera vez, mostrar info de la celda
-        static bool firstTime = true;
-        if (firstTime && pinName == "IO_LED0") {
-            qDebug() << "[ScanController::getPin] Pin IO_LED0: inputCell=" << pinInfo->inputCell
-                << ", outputCell=" << pinInfo->outputCell;
-            firstTime = false;
-        }
+        // Leer del buffer correcto según el tipo de celda:
 
-        // 1. Prioridad: Leer celda de entrada (Input)
+        // 1. Si tiene celda INPUT, leer del buffer CAPTURADO (TDO)
         if (pinInfo->inputCell != -1) {
-            auto level = engine->getPin(pinInfo->inputCell);
+            auto level = engine->getPinReadback(pinInfo->inputCell);
             return level;
         }
 
-        // 2. CORRECCIÓN: Si no hay entrada, leer celda de SALIDA (Output)
-        // Esto soluciona el "not sampled" en los LEDs configurados como output2
+        // 2. Si solo tiene celda OUTPUT, leer del buffer DESEADO (TDI)
+        //    (para mostrar al usuario qué valor estamos enviando)
         if (pinInfo->outputCell != -1) {
             auto level = engine->getPin(pinInfo->outputCell);
             return level;
         }
 
-        // Si llegamos aquí, no tiene ni entrada ni salida mapeada
-        qDebug() << "[ScanController::getPin] WARNING: Pin" << QString::fromStdString(pinName)
-            << "has inputCell = -1 AND outputCell = -1";
         return std::nullopt;
     }
 
@@ -272,24 +294,111 @@ namespace JTAG {
 
         if (!engine->loadInstruction(opcode, deviceModel->getIRLength())) return false;
 
+        // Setear modo antes de samplePins
+        engine->setOperationMode(BoundaryScanEngine::OperationMode::SAMPLE);
+
         // Ejecutar un ciclo de sampleo inicial
         return engine->samplePins();
     }
 
     bool ScanController::enterEXTEST() {
-        if (!engine) return false;
-        // 1. Primero hacemos SAMPLE para cargar valores seguros en el BSR
-        engine->samplePins();
+        if (!engine || !deviceModel) return false;
 
-        // 2. Cargamos EXTEST
-        uint32_t opcode = deviceModel->getInstruction("EXTEST");
-        return engine->loadInstruction(opcode, deviceModel->getIRLength());
+        // ========== SECUENCIA IEEE 1149.1 (Solución A) ==========
+
+        // Paso 1: Cargar SAMPLE/PRELOAD
+        uint32_t sampleInstr = deviceModel->getInstruction("SAMPLE/PRELOAD");
+        if (sampleInstr == 0xFFFFFFFF) {
+            sampleInstr = deviceModel->getInstruction("SAMPLE");
+        }
+
+        if (!engine->loadInstruction(sampleInstr, deviceModel->getIRLength())) {
+            return false;
+        }
+
+        // Paso 2: Sample para capturar estado actual
+        if (!engine->samplePins()) {
+            return false;
+        }
+
+        // Paso 3: Precargar valores seguros
+        if (!engine->preloadBSR()) {
+            return false;
+        }
+
+        // Paso 4: Cargar EXTEST (sin scanDR después)
+        uint32_t extestInstr = deviceModel->getInstruction("EXTEST");
+        if (!engine->loadInstruction(extestInstr, deviceModel->getIRLength())) {
+            return false;
+        }
+
+        // ========== FIN SECUENCIA IEEE 1149.1 ==========
+
+        // Setear modo al final
+        engine->setOperationMode(BoundaryScanEngine::OperationMode::EXTEST);
+
+        return true;
     }
 
     bool ScanController::enterBYPASS() {
         if (!engine) return false;
+        engine->setOperationMode(BoundaryScanEngine::OperationMode::BYPASS);
         uint32_t opcode = deviceModel->getInstruction("BYPASS");
         return engine->loadInstruction(opcode, deviceModel->getIRLength());
+    }
+
+    bool ScanController::enterINTEST() {
+        if (!engine || !deviceModel) return false;
+
+        // Secuencia segura IEEE 1149.1 (igual que EXTEST)
+        // INTEST prueba la lógica interna del chip, no los pines externos
+
+        // Paso 1: Cargar SAMPLE/PRELOAD
+        uint32_t sampleInstr = deviceModel->getInstruction("SAMPLE/PRELOAD");
+        if (sampleInstr == 0xFFFFFFFF) {
+            sampleInstr = deviceModel->getInstruction("SAMPLE");
+        }
+
+        if (!engine->loadInstruction(sampleInstr, deviceModel->getIRLength())) {
+            std::cerr << "[ScanController] Failed to load SAMPLE for INTEST sequence\n";
+            return false;
+        }
+
+        // Paso 2: Capturar estado actual
+        if (!engine->samplePins()) {
+            std::cerr << "[ScanController] Failed to sample pins for INTEST sequence\n";
+            return false;
+        }
+
+        // Paso 3: Precargar valores seguros en el update latch
+        if (!engine->preloadBSR()) {
+            std::cerr << "[ScanController] Failed to preload BSR for INTEST sequence\n";
+            return false;
+        }
+
+        // Paso 4: Cargar instrucción INTEST
+        uint32_t intestInstr = deviceModel->getInstruction("INTEST");
+        if (intestInstr == 0xFFFFFFFF) {
+            std::cerr << "[ScanController] INTEST instruction not found in BSDL\n";
+            return false;
+        }
+
+        if (!engine->loadInstruction(intestInstr, deviceModel->getIRLength())) {
+            std::cerr << "[ScanController] Failed to load INTEST instruction\n";
+            return false;
+        }
+
+        // Setear modo al final
+        engine->setOperationMode(BoundaryScanEngine::OperationMode::INTEST);
+
+        std::cout << "[ScanController] Successfully entered INTEST mode\n";
+        return true;
+    }
+
+    void ScanController::setEngineOperationMode(BoundaryScanEngine::OperationMode mode) {
+        if (engine) {
+            engine->setOperationMode(mode);
+        }
     }
 
     bool ScanController::writeBus(const std::vector<std::string>& pinNames, uint32_t value) {

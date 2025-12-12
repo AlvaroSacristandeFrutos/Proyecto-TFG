@@ -27,7 +27,8 @@ namespace JTAG {
 
         if (bsrLength > 0) {
             size_t numBytes = (bsrLength + 7) / 8;
-            bsr.resize(numBytes, 0);
+            bsr.resize(numBytes, 0);         // Buffer de escritura (TDI)
+            bsrCapture.resize(numBytes, 0);  // Buffer de lectura (TDO)
         }
 
         std::cout << "BoundaryScanEngine created (BSR length: " << bsrLength << " bits)\n";
@@ -154,6 +155,7 @@ namespace JTAG {
         bsrLength = length;
         size_t numBytes = (length + 7) / 8;
         bsr.resize(numBytes, 0);
+        bsrCapture.resize(numBytes, 0);  // NUEVO: inicializar buffer de captura
     }
 
     bool BoundaryScanEngine::setPin(size_t cellIndex, PinLevel level) {
@@ -173,23 +175,45 @@ namespace JTAG {
         return bit ? PinLevel::HIGH : PinLevel::LOW;
     }
 
+    std::optional<PinLevel> BoundaryScanEngine::getPinReadback(size_t cellIndex) const {
+        if (cellIndex >= bsrLength) return std::nullopt;
+
+        size_t byteIndex = cellIndex / 8;
+        size_t bitIndex = cellIndex % 8;
+
+        bool bit = (bsrCapture[byteIndex] >> bitIndex) & 1;
+        return bit ? PinLevel::HIGH : PinLevel::LOW;
+    }
+
     bool BoundaryScanEngine::applyChanges() {
         if (bsrLength == 0) return false;
 
-        // Usar método transaccional de alto nivel
-        // El adapter maneja toda la navegación TAP internamente
+        // IEEE 1149.1: scanDR ejecuta la secuencia:
+        // 1. CAPTURE-DR: El chip captura el estado físico actual de los pines
+        // 2. SHIFT-DR: Desplazamos datos (ENVÍA bsr, RECIBE dataOut)
+        // 3. UPDATE-DR: El chip aplica el BSR a los pines físicos
+        //
+        // IMPORTANTE: Con buffers separados:
+        // - bsr (TDI) mantiene lo que QUEREMOS escribir (no se sobrescribe)
+        // - bsrCapture (TDO) recibe lo que el chip CAPTURÓ
+
         std::vector<uint8_t> dataOut;
         if (!adapter->scanDR(bsrLength, bsr, dataOut)) {
             std::cerr << "BoundaryScanEngine::applyChanges() - scanDR failed\n";
             return false;
         }
-        std::cout << "DEBUG DATAOUT: ";
+
+        // DEBUG: mostrar datos capturados del chip (TDO)
+        std::cout << "DEBUG CAPTURED (TDO): ";
         for (auto byte : dataOut) {
             printf("%02X ", byte);
         }
         std::cout << std::endl;
-        bsr = dataOut;
-        // El adapter nos deja en Run-Test/Idle después de scanDR
+
+        // CORRECCIÓN: Guardar en buffer separado, NO sobrescribir bsr
+        bsrCapture = dataOut;  // Guardar lectura del chip en buffer TDO
+        // bsr se mantiene intacto para próximas escrituras
+
         currentState = TAPState::RUN_TEST_IDLE;
         return true;
     }
@@ -197,25 +221,63 @@ namespace JTAG {
     bool BoundaryScanEngine::samplePins() {
         if (bsrLength == 0) return false;
 
-        // Usar método transaccional de alto nivel
-        // El adapter maneja toda la navegación TAP internamente
+        // samplePins() es para LEER el estado del chip
+        // Enviamos bsr actual (puede ser cualquier valor)
+        // Lo importante es la respuesta en dataOut (TDO)
+
         std::vector<uint8_t> dataOut;
         if (!adapter->scanDR(bsrLength, bsr, dataOut)) {
             std::cerr << "BoundaryScanEngine::samplePins() - scanDR failed\n";
             return false;
         }
-        std::cout << "RAW BSR (" << bsrLength << " bits): ";
+
+        std::cout << "RAW BSR SAMPLE (" << bsrLength << " bits): ";
         for (auto byte : dataOut) {
-            // Imprime en Hexadecimal
             printf("%02X ", byte);
         }
         std::cout << "\n";
-        // ---------------------------------------------------
 
-        // Actualizar BSR con los datos leídos
-        bsr = dataOut;
+        // Guardar lectura en buffer separado
+        bsrCapture = dataOut;
+
+        // Solo actualizar bsr en modos de SOLO LECTURA
+        // En EXTEST/INTEST, bsr contiene ediciones del usuario que deben preservarse
+        if (operationMode == OperationMode::SAMPLE ||
+            operationMode == OperationMode::BYPASS) {
+            bsr = dataOut;  // Safe: usuario no está editando
+        }
+        // En EXTEST/INTEST: bsr NO se modifica, mantiene valores del usuario
 
         currentState = TAPState::RUN_TEST_IDLE;
+        return true;
+    }
+
+    bool BoundaryScanEngine::preloadBSR() {
+        if (bsrLength == 0) return false;
+
+        // IEEE 1149.1 - SAMPLE/PRELOAD:
+        // Este método se llama cuando la instrucción activa es SAMPLE o SAMPLE/PRELOAD.
+        // UPDATE-DR carga el "Latch de actualización" del BSR SIN afectar los pines físicos.
+        // Los pines solo cambiarán cuando se cargue EXTEST.
+        //
+        // Propósito: Precargar valores seguros antes de activar EXTEST.
+
+        std::cout << "BoundaryScanEngine::preloadBSR() - Preloading BSR with current values\n";
+
+        std::vector<uint8_t> dataOut;
+        if (!adapter->scanDR(bsrLength, bsr, dataOut)) {
+            std::cerr << "BoundaryScanEngine::preloadBSR() - scanDR failed\n";
+            return false;
+        }
+
+        // Guardar respuesta en buffer de captura
+        bsrCapture = dataOut;
+
+        // Nota: bsr se mantiene intacto (contiene los valores precargados)
+
+        currentState = TAPState::RUN_TEST_IDLE;
+
+        std::cout << "BoundaryScanEngine::preloadBSR() - Preload successful\n";
         return true;
     }
 

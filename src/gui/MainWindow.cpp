@@ -29,9 +29,11 @@ MainWindow::MainWindow(QWidget *parent)
     , scanController(nullptr)  // AQUÍ INICIALIZARÁS: std::make_unique<JTAG::ScanController>()
     , waveformScene(nullptr)
     , chipVisualizer(nullptr)
+    , controlPanel(nullptr)
     , zoomComboBox(nullptr)
     , radioSample(nullptr)
     , radioExtest(nullptr)
+    , radioIntest(nullptr)
     , radioBypass(nullptr)
     , jtagModeButtonGroup(nullptr)
     , btnSetAllSafe(nullptr)
@@ -57,7 +59,15 @@ MainWindow::MainWindow(QWidget *parent)
     setupToolbar();
     setupBackend();
     setupConnections();
-    
+
+    // Crear Control Panel y reemplazar tableWidgetWatch
+    controlPanel = new ControlPanelWidget(this);
+
+    // Reemplazar widget en dockWatch
+    QWidget* oldWidget = ui->dockWatch->widget();
+    ui->dockWatch->setWidget(controlPanel);
+    delete oldWidget;  // Eliminar tableWidgetWatch
+
     // Hide Watch panel by default
     ui->dockWatch->setVisible(false);
     ui->actionWatch->setChecked(false);
@@ -231,6 +241,7 @@ void MainWindow::setupToolbar()
     // Create radio buttons
     radioSample = new QRadioButton("SAMPLE", this);
     radioExtest = new QRadioButton("EXTEST", this);
+    radioIntest = new QRadioButton("INTEST", this);
     radioBypass = new QRadioButton("BYPASS", this);
 
     radioSample->setChecked(true); // Default to SAMPLE mode
@@ -239,11 +250,13 @@ void MainWindow::setupToolbar()
     jtagModeButtonGroup = new QButtonGroup(this);
     jtagModeButtonGroup->addButton(radioSample, 0);
     jtagModeButtonGroup->addButton(radioExtest, 1);
-    jtagModeButtonGroup->addButton(radioBypass, 2);
+    jtagModeButtonGroup->addButton(radioIntest, 2);
+    jtagModeButtonGroup->addButton(radioBypass, 3);
 
     // Add to toolbar
     ui->toolBar->addWidget(radioSample);
     ui->toolBar->addWidget(radioExtest);
+    ui->toolBar->addWidget(radioIntest);
     ui->toolBar->addWidget(radioBypass);
 
     // Connect signal (use idClicked which passes the button ID directly)
@@ -279,6 +292,7 @@ void MainWindow::setupToolbar()
     // Initially disable these buttons (enable after connection)
     radioSample->setEnabled(false);
     radioExtest->setEnabled(false);
+    radioIntest->setEnabled(false);
     radioBypass->setEnabled(false);
     btnSetAllSafe->setEnabled(false);
     btnSetAll1->setEnabled(false);
@@ -365,6 +379,12 @@ void MainWindow::setupConnections()
     connect(ui->actionWavePrev, &QAction::triggered, this, &MainWindow::onWavePrev);
     connect(ui->actionWaveNext, &QAction::triggered, this, &MainWindow::onWaveNext);
     connect(ui->actionWaveGoto, &QAction::triggered, this, &MainWindow::onWaveGoto);
+
+    // Control Panel connection
+    if (controlPanel) {
+        connect(controlPanel, &ControlPanelWidget::pinValueChanged,
+                this, &MainWindow::onControlPanelPinChanged);
+    }
 }
 
 void MainWindow::enableControlsAfterConnection(bool enable)
@@ -1066,74 +1086,57 @@ void MainWindow::onWatchShow()
 
 void MainWindow::onWatchAddSignal()
 {
-    QList<QTableWidgetItem*> selectedItems = ui->tableWidgetPins->selectedItems();
-    if (selectedItems.isEmpty()) {
-        updateStatusBar("No pins selected");
+    if (!controlPanel) return;
+
+    // Obtener pin seleccionado en tabla Pins
+    int currentRow = ui->tableWidgetPins->currentRow();
+    if (currentRow < 0) {
+        QMessageBox::information(this, "No Selection",
+            "Please select a pin in the Pins table first");
         return;
     }
 
-    QSet<int> rows;
-    for (auto item : selectedItems) {
-        rows.insert(item->row());
-    }
+    // Extraer información del pin
+    QTableWidgetItem* nameItem = ui->tableWidgetPins->item(currentRow, 0);
+    QTableWidgetItem* pinNumItem = ui->tableWidgetPins->item(currentRow, 1);
 
-    for (int row : rows) {
-        // Copiar fila de Pins a Watch
-        int watchRow = ui->tableWidgetWatch->rowCount();
-        ui->tableWidgetWatch->insertRow(watchRow);
+    if (!nameItem || !pinNumItem) return;
 
-        // Copiar columnas 0-4 de Pins (Name, Pin#, Port, I/O Value, Type)
-        for (int col = 0; col < 5; col++) {
-            QTableWidgetItem *sourceItem = ui->tableWidgetPins->item(row, col);
-            if (col < 4) {
-                // Columnas 0-3: Name, Pin#, Port, I/O Value
-                if (sourceItem) {
-                    ui->tableWidgetWatch->setItem(watchRow, col,
-                        new QTableWidgetItem(sourceItem->text()));
-                }
-            } else {
-                // Columna 4 en Watch es "Transitions Count", inicializar a 0
-                ui->tableWidgetWatch->setItem(watchRow, 4, new QTableWidgetItem("0"));
-                // Columna 5 en Watch es "Type", copiar de columna 4 de Pins
-                if (sourceItem) {
-                    ui->tableWidgetWatch->setItem(watchRow, 5,
-                        new QTableWidgetItem(sourceItem->text()));
-                }
-            }
-        }
-    }
+    std::string pinName = nameItem->text().toStdString();
+    std::string pinNumber = pinNumItem->text().toStdString();
 
-    updateStatusBar(QString("Added %1 signal(s) to Watch").arg(rows.size()));
+    // Añadir al Control Panel
+    controlPanel->addPin(pinName, pinNumber);
+
+    // Mostrar dock si está oculto
+    ui->dockWatch->setVisible(true);
+
+    updateStatusBar(QString("Added %1 to Control Panel")
+        .arg(QString::fromStdString(pinName)));
 }
 
 void MainWindow::onWatchRemove()
 {
-    QList<QTableWidgetItem*> selectedItems = ui->tableWidgetWatch->selectedItems();
-    if (selectedItems.isEmpty()) {
-        updateStatusBar("No signals selected in Watch");
+    if (!controlPanel) return;
+
+    std::string selectedPin = controlPanel->getSelectedPin();
+    if (selectedPin.empty()) {
+        QMessageBox::information(this, "No Selection",
+            "Please select a pin to remove");
         return;
     }
-    
-    QSet<int> rows;
-    for (auto item : selectedItems) {
-        rows.insert(item->row());
-    }
-    
-    // Remove in reverse order to avoid index issues
-    QList<int> rowList = rows.values();
-    std::sort(rowList.begin(), rowList.end(), std::greater<int>());
-    
-    for (int row : rowList) {
-        ui->tableWidgetWatch->removeRow(row);
-    }
-    
-    updateStatusBar(QString("Removed %1 signal(s) from Watch").arg(rows.size()));
+
+    controlPanel->removePin(selectedPin);
+    updateStatusBar(QString("Removed %1 from Control Panel")
+        .arg(QString::fromStdString(selectedPin)));
 }
 
 void MainWindow::onWatchRemoveAll()
 {
-    ui->tableWidgetWatch->setRowCount(0);
-    updateStatusBar("Watch cleared");
+    if (!controlPanel) return;
+
+    controlPanel->removeAllPins();
+    updateStatusBar("Control Panel cleared");
 }
 
 void MainWindow::onWatchZeroTransitionCounter()
@@ -1607,50 +1610,21 @@ void MainWindow::renderChipVisualization()
     chipVisualizer->renderFromDeviceModel(*deviceModel);
 }
 
-void MainWindow::updateWatchTable()
+void MainWindow::updateControlPanel(const std::vector<JTAG::PinLevel>& pinLevels)
 {
-    // ==================== PUNTO DE INTEGRACIÓN 12 ====================
-    if (!scanController) return;
+    if (!controlPanel || !scanController) return;
+    if (!ui->dockWatch->isVisible()) return;  // No actualizar si está oculto
 
-    for (int row = 0; row < ui->tableWidgetWatch->rowCount(); row++) {
-        QTableWidgetItem *nameItem = ui->tableWidgetWatch->item(row, 0);
-        if (nameItem) {
-            std::string pinName = nameItem->text().toStdString();
-            auto level = scanController->getPin(pinName);
-
-            if (level.has_value()) {
-                // Update value
-                QString valueStr;
-                switch (level.value()) {
-                    case JTAG::PinLevel::LOW: valueStr = "0"; break;
-                    case JTAG::PinLevel::HIGH: valueStr = "1"; break;
-                    case JTAG::PinLevel::HIGH_Z: valueStr = "Z"; break;
-                }
-
-                QTableWidgetItem *valueItem = ui->tableWidgetWatch->item(row, 3);
-                if (valueItem) {
-                    valueItem->setText(valueStr);
-                }
-
-                // Detect transition
-                if (previousLevels.count(pinName) > 0 &&
-                    previousLevels[pinName] != level.value()) {
-                    transitionCounters[pinName]++;
-                }
-                previousLevels[pinName] = level.value();
-
-                // Update transition counter (column 4)
-                QTableWidgetItem *transItem = ui->tableWidgetWatch->item(row, 4);
-                if (transItem) {
-                    transItem->setText(QString::number(transitionCounters[pinName]));
-                } else {
-                    ui->tableWidgetWatch->setItem(row, 4,
-                        new QTableWidgetItem(QString::number(transitionCounters[pinName])));
-                }
-            }
-        }
+    // Solo actualizar en modos de solo lectura (SAMPLE)
+    // En EXTEST/INTEST, el usuario controla los valores
+    if (currentJTAGMode == JTAGMode::EXTEST || currentJTAGMode == JTAGMode::INTEST) {
+        return;  // No sobrescribir ediciones del usuario
     }
-    // ================================================================
+
+    // En modo SAMPLE, no hacemos nada aquí porque el Control Panel
+    // no se muestra en SAMPLE (está oculto).
+    // El Control Panel solo es visible en EXTEST/INTEST donde el usuario
+    // controla los valores mediante radio buttons, no desde el backend.
 }
 
 void MainWindow::captureWaveformSample()
@@ -1810,8 +1784,8 @@ void MainWindow::onPinsDataReady(std::vector<JTAG::PinLevel> pins)
     // 1. Actualizar tabla de pines
     updatePinsTable();
 
-    // 2. Actualizar tabla de watch con detección de transiciones
-    updateWatchTable();
+    // 2. Actualizar Control Panel (reemplaza updateWatchTable)
+    updateControlPanel(pins);
 
     // 3. Capturar muestra para waveform
     captureWaveformSample();
@@ -1843,23 +1817,33 @@ void MainWindow::onJTAGModeChanged(int modeId)
         return;
     }
 
-    
-
     JTAG::ScanMode targetMode;
     QString modeName;
+    bool showControlPanel = false;
+    bool enableControlPanel = false;
 
     switch (modeId) {
-    case 0:
+    case 0:  // SAMPLE
         targetMode = JTAG::ScanMode::SAMPLE;
         modeName = "SAMPLE";
+        showControlPanel = false;  // Ocultar
         break;
-    case 1:
+    case 1:  // EXTEST
         targetMode = JTAG::ScanMode::EXTEST;
         modeName = "EXTEST";
+        showControlPanel = true;   // Mostrar
+        enableControlPanel = true; // Habilitar edición
         break;
-    case 2:
+    case 2:  // INTEST
+        targetMode = JTAG::ScanMode::INTEST;
+        modeName = "INTEST";
+        showControlPanel = true;   // Mostrar
+        enableControlPanel = true; // Habilitar edición
+        break;
+    case 3:  // BYPASS
         targetMode = JTAG::ScanMode::BYPASS;
         modeName = "BYPASS";
+        showControlPanel = false;  // Ocultar
         break;
     default: return;
     }
@@ -1867,7 +1851,15 @@ void MainWindow::onJTAGModeChanged(int modeId)
     scanController->setScanMode(targetMode);
 
     currentJTAGMode = (modeId == 0) ? JTAGMode::SAMPLE :
-        (modeId == 1) ? JTAGMode::EXTEST : JTAGMode::BYPASS;
+                      (modeId == 1) ? JTAGMode::EXTEST :
+                      (modeId == 2) ? JTAGMode::INTEST :
+                      JTAGMode::BYPASS;
+
+    // Controlar visibilidad del Control Panel
+    if (controlPanel) {
+        ui->dockWatch->setVisible(showControlPanel);
+        controlPanel->setEnabled(enableControlPanel);
+    }
 
     updateStatusBar(QString("Mode changed to %1").arg(modeName));
     updatePinsTable(); // Refrescar para habilitar/deshabilitar edición
@@ -1945,4 +1937,17 @@ void MainWindow::onSetAllTo0()
     scanController->applyChanges();
     updateStatusBar(QString("Set %1 output pins to LOW").arg(count));
     updatePinsTable();
+}
+
+void MainWindow::onControlPanelPinChanged(std::string pinName, JTAG::PinLevel level)
+{
+    if (!scanController) return;
+
+    // Llamar al backend de forma asíncrona
+    scanController->setPinAsync(pinName, level);
+
+    updateStatusBar(QString("Pin %1 set to %2")
+        .arg(QString::fromStdString(pinName))
+        .arg(level == JTAG::PinLevel::LOW ? "0" :
+             level == JTAG::PinLevel::HIGH ? "1" : "Z"));
 }

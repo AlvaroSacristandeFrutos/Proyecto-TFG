@@ -69,6 +69,10 @@ namespace JTAG {
         bool enterSAMPLE();
         bool enterEXTEST();
         bool enterBYPASS();
+        bool enterINTEST();
+
+        // NUEVO: Cambiar modo de operación del engine
+        void setEngineOperationMode(BoundaryScanEngine::OperationMode mode);
 
         // Operaciones de Bus
         bool writeBus(const std::vector<std::string>& pinNames, uint32_t value);

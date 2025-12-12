@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "ChipVisualizer.h"
+#include "ControlPanelWidget.h"
 
 // Forward declarations for your backend
 namespace JTAG {
@@ -130,6 +131,9 @@ private slots:
     void onSetAllToZ();
     void onSetAllTo0();
 
+    // Control Panel slot
+    void onControlPanelPinChanged(std::string pinName, JTAG::PinLevel level);
+
 private:
     Ui::MainWindow *ui;
     
@@ -141,13 +145,17 @@ private:
 
     // Chip visualization
     ChipVisualizer *chipVisualizer;
-    
+
+    // Control Panel (reemplaza Watch)
+    ControlPanelWidget *controlPanel;
+
     // Toolbar widgets
     QComboBox *zoomComboBox;
 
     // JTAG Mode selector widgets
     class QRadioButton *radioSample;
     class QRadioButton *radioExtest;
+    class QRadioButton *radioIntest;
     class QRadioButton *radioBypass;
     class QButtonGroup *jtagModeButtonGroup;
 
@@ -169,7 +177,7 @@ private:
     bool isDeviceInitialized;
 
     // JTAG Mode state
-    enum class JTAGMode { SAMPLE, EXTEST, BYPASS };
+    enum class JTAGMode { SAMPLE, EXTEST, INTEST, BYPASS };
     JTAGMode currentJTAGMode;
     
     // Waveform capture state
@@ -201,7 +209,7 @@ private:
 
     // Backend integration helpers
     void updatePinsTable();
-    void updateWatchTable();
+    void updateControlPanel(const std::vector<JTAG::PinLevel>& pinLevels);
     void captureWaveformSample();
     void redrawWaveform();
     void enableControlsAfterConnection(bool enable);

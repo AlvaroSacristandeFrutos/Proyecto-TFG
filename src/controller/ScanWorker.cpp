@@ -31,6 +31,28 @@ namespace JTAG {
 
     void ScanWorker::setScanMode(ScanMode mode) {
         currentMode = mode;
+
+        // Sincronizar modo con el engine
+        if (engine) {
+            BoundaryScanEngine::OperationMode engineMode;
+            switch (mode) {
+                case ScanMode::SAMPLE:
+                    engineMode = BoundaryScanEngine::OperationMode::SAMPLE;
+                    break;
+                case ScanMode::EXTEST:
+                    engineMode = BoundaryScanEngine::OperationMode::EXTEST;
+                    break;
+                case ScanMode::INTEST:
+                    engineMode = BoundaryScanEngine::OperationMode::INTEST;
+                    break;
+                case ScanMode::BYPASS:
+                    engineMode = BoundaryScanEngine::OperationMode::BYPASS;
+                    break;
+                default:
+                    engineMode = BoundaryScanEngine::OperationMode::SAMPLE;
+            }
+            engine->setOperationMode(engineMode);
+        }
     }
 
     void ScanWorker::markDirtyPin(size_t cellIndex, PinLevel level) {
@@ -68,6 +90,7 @@ namespace JTAG {
 
                 std::string instrName = "SAMPLE"; // Default
                 if (targetMode == ScanMode::EXTEST) instrName = "EXTEST";
+                if (targetMode == ScanMode::INTEST) instrName = "INTEST";
                 if (targetMode == ScanMode::BYPASS) instrName = "BYPASS";
 
                 uint32_t opcode = deviceModel->getInstruction(instrName);
@@ -84,28 +107,35 @@ namespace JTAG {
                 }
 
                 // 2. EJECUCIÓN DEL MODO
-                if (targetMode == ScanMode::EXTEST) {
-                    // A) Procesar nuevos cambios de la GUI (si los hay)
+                if (targetMode == ScanMode::EXTEST || targetMode == ScanMode::INTEST) {
+                    // Ambos modos EXTEST e INTEST usan el mismo mecanismo BSR
+                    // Solo difiere la instrucción cargada (EXTEST vs INTEST)
+                    // EXTEST: controla pines externos
+                    // INTEST: prueba lógica interna
+
+                    // A) Procesar cambios nuevos de la GUI
                     if (hasDirtyPins()) {
                         processDirtyPins();
-                    }
 
-                    // B) [CRÍTICO] RESTAURAR SALIDAS FORZADAS
-                    // Antes de enviar, re-aplicamos nuestros deseos guardados sobre el BSR.
-                    // Esto evita que la lectura anterior ("0") nos borre el "1" que queremos mantener.
-                    for (const auto& [cell, level] : desiredOutputs) {
-                        engine->setPin(cell, level);
+                        // B) Aplicar cambios INMEDIATAMENTE
+                        // Como BoundaryScanEngine ahora mantiene bsr separado,
+                        // no necesitamos restaurar manualmente los valores
+                        if (!engine->applyChanges()) {
+                            QString modeStr = (targetMode == ScanMode::EXTEST) ? "EXTEST" : "INTEST";
+                            emit errorOccurred(QString("Failed to apply changes in %1").arg(modeStr));
+                        }
                     }
-
-                    // C) Enviar datos (Shift-DR)
-                    // Esto escribe los valores en el chip y mantiene el LED encendido
-                    if (!engine->applyChanges()) {
-                        emit errorOccurred("Failed to apply changes in EXTEST");
-                    }
+                    // Si no hay cambios, NO hacer applyChanges innecesario
+                    // (optimización para reducir tráfico JTAG)
                 }
-                else {
+                else if (targetMode == ScanMode::SAMPLE) {
                     // Modo SAMPLE (Solo lectura)
                     engine->samplePins();
+                }
+                else if (targetMode == ScanMode::BYPASS) {
+                    // Modo BYPASS: instrucción ya cargada, no hacer operaciones BSR
+                    // El chip está en bypass, el BSR no es accesible
+                    // Modo estático: no polling necesario
                 }
 
                 // 3. ACTUALIZAR GUI
@@ -113,9 +143,22 @@ namespace JTAG {
                 size_t bsrLen = engine->getBSRLength();
                 pins.reserve(bsrLen);
 
-                for (size_t i = 0; i < bsrLen; ++i) {
-                    auto level = engine->getPin(i);
-                    pins.push_back(level.value_or(PinLevel::HIGH_Z));
+                if (targetMode != ScanMode::BYPASS) {
+                    // MODE-AWARE: Lectura según el modo activo
+                    // EXTEST/INTEST: Usuario edita → leer buffer de escritura (bsr estable)
+                    // SAMPLE: Solo lectura → leer buffer capturado (bsrCapture actualizado)
+                    for (size_t i = 0; i < bsrLen; ++i) {
+                        auto level = (targetMode == ScanMode::EXTEST || targetMode == ScanMode::INTEST)
+                            ? engine->getPin(i)          // EXTEST/INTEST: lee bsr (ediciones del usuario)
+                            : engine->getPinReadback(i); // SAMPLE: lee bsrCapture (estado real del chip)
+                        pins.push_back(level.value_or(PinLevel::HIGH_Z));
+                    }
+                } else {
+                    // En modo BYPASS, el BSR no es accesible
+                    // Enviar estados high-Z a la GUI
+                    for (size_t i = 0; i < bsrLen; ++i) {
+                        pins.push_back(PinLevel::HIGH_Z);
+                    }
                 }
                 emit pinsUpdated(pins);
 
@@ -137,12 +180,9 @@ namespace JTAG {
     void ScanWorker::processDirtyPins() {
         std::lock_guard<std::mutex> lock(dirtyMutex);
         for (const auto& [cellIndex, level] : dirtyPins) {
-            // 1. Guardamos en el Engine (para el ciclo actual)
+            // setPin() modifica bsr (buffer TDI)
+            // Este valor se mantiene automáticamente entre llamadas
             engine->setPin(cellIndex, level);
-
-            // 2. Guardamos en nuestra Memoria Persistente (para ciclos futuros)
-            // Esto es vital para que applyChanges no borre el valor en la siguiente vuelta
-            desiredOutputs[cellIndex] = level;
         }
         dirtyPins.clear();
     }
