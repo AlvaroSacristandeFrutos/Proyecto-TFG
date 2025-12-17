@@ -15,8 +15,16 @@
 #include <QDir>
 #include <QStringList>
 #include <QTimer>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QSplitter>
+#include <QScrollBar>
+#include <QDialog>
+#include <QListWidget>
+#include <QDialogButtonBox>
 #include <iostream>
 #include <iomanip>
+#include <cmath>
 #include <QMetaType>
 
 // IMPORTANTE: Descomenta estas líneas cuando integres el backend
@@ -31,6 +39,8 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
     , scanController(nullptr)  // AQUÍ INICIALIZARÁS: std::make_unique<JTAG::ScanController>()
     , waveformScene(nullptr)
+    , timelineScene(nullptr)
+    , timelineView(nullptr)
     , chipVisualizer(nullptr)
     , controlPanel(nullptr)
     , zoomComboBox(nullptr)
@@ -51,6 +61,7 @@ MainWindow::MainWindow(QWidget *parent)
     , currentJTAGMode(JTAGMode::SAMPLE)
     , isCapturing(false)
     , waveformTimebase(1.0)
+    , isRedrawing(false)
 {
     ui->setupUi(this);
 
@@ -76,9 +87,14 @@ MainWindow::MainWindow(QWidget *parent)
 
     setupBackend();
     setupConnections();  // Ahora controlPanel YA existe cuando conectamos
-    
+
     updateWindowTitle();
     enableControlsAfterConnection(false);
+
+    // Asegurar que el DockWidget Waveform es visible y tiene tamaño razonable
+    ui->dockWaveform->setVisible(true);
+    ui->dockWaveform->resize(1200, 300);
+    ui->actionWaveform->setChecked(true);
 }
 
 MainWindow::~MainWindow()
@@ -88,6 +104,7 @@ MainWindow::~MainWindow()
         scanController->stopPolling();
     }
     delete waveformScene;
+    delete timelineScene;
     delete ui;
 }
 
@@ -162,16 +179,121 @@ void MainWindow::setupGraphicsViews()
         oldWidget->hide();
     }
 
-    // Setup waveform graphics view
+    // Setup waveform graphics view with timeline
     waveformScene = new QGraphicsScene(this);
+    waveformNamesScene = new QGraphicsScene(this);
+    timelineScene = new QGraphicsScene(this);
+
+    // Create timeline view (fixed height at top)
+    timelineView = new QGraphicsView(this);
+    timelineView->setScene(timelineScene);
+    timelineView->setRenderHint(QPainter::Antialiasing);
+    timelineView->setFixedHeight(50);
+    timelineView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    timelineView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    timelineView->setStyleSheet("background-color: rgb(245, 245, 245); border-bottom: 1px solid rgb(200, 200, 200);");
+
+    // Create fixed names view (left side, 150px wide)
+    waveformNamesView = new QGraphicsView(this);
+    waveformNamesView->setScene(waveformNamesScene);
+    waveformNamesView->setRenderHint(QPainter::Antialiasing);
+    waveformNamesView->setFixedWidth(150);
+    waveformNamesView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    waveformNamesView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    waveformNamesView->setStyleSheet("background-color: rgb(245, 245, 245); border-right: 2px solid rgb(180, 180, 180);");
+
+    // Configure existing waveform view
     ui->graphicsViewWaveform->setScene(waveformScene);
     ui->graphicsViewWaveform->setRenderHint(QPainter::Antialiasing);
-    
-    // Add grid lines for waveform
-    QPen gridPen(QColor(220, 220, 220));
-    for (int i = 0; i < 20; i++) {
-        waveformScene->addLine(i * 50, 0, i * 50, 200, gridPen);
+
+    // Sincronizar scroll vertical entre nombres y waveform
+    connect(ui->graphicsViewWaveform->verticalScrollBar(), &QScrollBar::valueChanged,
+            [this](int value) {
+                waveformNamesView->verticalScrollBar()->setValue(value);
+            });
+
+    // BUG FIX 2 & 3: Sincronizar scroll HORIZONTAL entre waveform y timeline
+    // Y redibujar para actualizar eje temporal con nuevos timestamps visibles
+    connect(ui->graphicsViewWaveform->horizontalScrollBar(), &QScrollBar::valueChanged,
+            [this](int value) {
+                if (!isRedrawing) {  // Solo si no estamos ya en redibujado
+                    timelineView->horizontalScrollBar()->setValue(value);
+                    redrawWaveform();  // Actualizar eje temporal con timestamps visibles
+                }
+            });
+
+    // Get splitter from UI (para eliminarlo y reemplazarlo)
+    QSplitter* splitter = ui->splitter;
+
+    // Create horizontal container for names + waveform
+    QWidget* waveformRow = new QWidget();
+    QHBoxLayout* waveformRowLayout = new QHBoxLayout(waveformRow);
+    waveformRowLayout->setContentsMargins(0, 0, 0, 0);
+    waveformRowLayout->setSpacing(0);
+    waveformRowLayout->addWidget(waveformNamesView);
+    waveformRowLayout->addWidget(ui->graphicsViewWaveform);
+
+    // CRITICAL: Set expanding policy for waveform row (takes all remaining space)
+    waveformRow->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+    // Create horizontal container for timeline with 150px left spacer (to align with names)
+    QWidget* timelineRow = new QWidget();
+    QHBoxLayout* timelineRowLayout = new QHBoxLayout(timelineRow);
+    timelineRowLayout->setContentsMargins(0, 0, 0, 0);
+    timelineRowLayout->setSpacing(0);
+
+    // Add spacer widget with same width as waveformNamesView (150px)
+    QWidget* timelineSpacer = new QWidget();
+    timelineSpacer->setFixedWidth(150);
+    timelineSpacer->setStyleSheet("background-color: rgb(245, 245, 245);");
+    timelineRowLayout->addWidget(timelineSpacer);
+    timelineRowLayout->addWidget(timelineView);
+
+    // CRITICAL: Set fixed height for timeline row (no expansion)
+    timelineRow->setFixedHeight(50);
+    timelineRow->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+
+    // Create container widget to hold timeline row and waveform row
+    QWidget* waveformContainer = new QWidget();
+    waveformContainer->setObjectName("waveformContainer");
+    QVBoxLayout* waveformLayout = new QVBoxLayout(waveformContainer);
+    waveformLayout->setContentsMargins(0, 0, 0, 0);
+    waveformLayout->setSpacing(0);
+
+    // CRITICAL: Add with stretch factors: timeline=0 (fixed), waveform=1 (expanding)
+    waveformLayout->addWidget(timelineRow, 0);      // No stretch - fixed height
+    waveformLayout->addWidget(waveformRow, 1);      // Stretch=1 - takes all remaining space
+
+    // Reemplazar el splitter en el layout del DockWidget
+    QLayout* dockLayout = splitter->parentWidget()->layout();
+    int splitterIndex = dockLayout->indexOf(splitter);
+
+    if (splitterIndex >= 0) {
+        // Remover splitter del layout
+        dockLayout->removeWidget(splitter);
+
+        // Ocultar y eliminar table y splitter
+        ui->tableWidgetWaveform->setParent(nullptr);
+        ui->tableWidgetWaveform->deleteLater();
+        splitter->setParent(nullptr);
+        splitter->deleteLater();
+
+        // Insertar container en su lugar
+        dockLayout->addWidget(waveformContainer);
+
+        std::cout << "[DEBUG] Splitter and table removed, waveformContainer added at full width" << std::endl;
+    } else {
+        std::cout << "[ERROR] Could not find splitter in dock layout!" << std::endl;
     }
+
+    // Configurar política de tamaño
+    waveformContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    waveformContainer->show();
+    timelineView->show();
+    ui->graphicsViewWaveform->show();
+
+    // BUG FIX 1: NO dibujar waveform inicial vacío (se inicializa al añadir primera señal)
+    // redrawWaveform();  // ELIMINADO - evita grid colapsado al iniciar
 }
 
 void MainWindow::setupTables()
@@ -214,20 +336,18 @@ void MainWindow::setupTables()
     connect(ui->tableWidgetPins->selectionModel(), &QItemSelectionModel::selectionChanged,
             this, &MainWindow::onPinTableSelectionChanged);
 
-    // Setup Waveform table
-    ui->tableWidgetWaveform->setColumnCount(5);
-    ui->tableWidgetWaveform->setHorizontalHeaderLabels(
-        QStringList() << "Name" << "Device" << "Pin #" << "Port" << "Type");
+    // Setup Waveform table - SOLO columna Name
+    ui->tableWidgetWaveform->setColumnCount(1);
+    ui->tableWidgetWaveform->setHorizontalHeaderLabels(QStringList() << "Name");
     ui->tableWidgetWaveform->setSelectionBehavior(QAbstractItemView::SelectRows);
 
-    // Permitir redimensionamiento manual en todas las columnas
-    ui->tableWidgetWaveform->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
-    // Establecer anchos iniciales
-    ui->tableWidgetWaveform->setColumnWidth(0, 120);  // Name
-    ui->tableWidgetWaveform->setColumnWidth(1, 90);   // Device
-    ui->tableWidgetWaveform->setColumnWidth(2, 60);   // Pin #
-    ui->tableWidgetWaveform->setColumnWidth(3, 60);   // Port
-    ui->tableWidgetWaveform->setColumnWidth(4, 80);   // Type
+    // Configurar altura de fila fija (40px) para alinearse con waveform
+    ui->tableWidgetWaveform->verticalHeader()->setDefaultSectionSize(40);
+    ui->tableWidgetWaveform->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+
+    // Configurar ancho de columna para que use todo el espacio disponible
+    ui->tableWidgetWaveform->horizontalHeader()->setStretchLastSection(true);
+    ui->tableWidgetWaveform->setColumnWidth(0, 150);  // Name (ancho inicial)
 }
 
 void MainWindow::setupToolbar()
@@ -270,21 +390,25 @@ void MainWindow::setupToolbar()
 
     // Create radio buttons
     radioSample = new QRadioButton("SAMPLE", this);
+    radioSampleSingleShot = new QRadioButton("SAMPLE 1x", this);
     radioExtest = new QRadioButton("EXTEST", this);
     radioIntest = new QRadioButton("INTEST", this);
     radioBypass = new QRadioButton("BYPASS", this);
 
     radioSample->setChecked(true); // Default to SAMPLE mode
+    radioSampleSingleShot->setToolTip("Single shot sample - captures once and stops");
 
     // Create button group
     jtagModeButtonGroup = new QButtonGroup(this);
     jtagModeButtonGroup->addButton(radioSample, 0);
-    jtagModeButtonGroup->addButton(radioExtest, 1);
-    jtagModeButtonGroup->addButton(radioIntest, 2);
-    jtagModeButtonGroup->addButton(radioBypass, 3);
+    jtagModeButtonGroup->addButton(radioSampleSingleShot, 1);
+    jtagModeButtonGroup->addButton(radioExtest, 2);
+    jtagModeButtonGroup->addButton(radioIntest, 3);
+    jtagModeButtonGroup->addButton(radioBypass, 4);
 
     // Add to toolbar
     ui->toolBar->addWidget(radioSample);
+    ui->toolBar->addWidget(radioSampleSingleShot);
     ui->toolBar->addWidget(radioExtest);
     ui->toolBar->addWidget(radioIntest);
     ui->toolBar->addWidget(radioBypass);
@@ -321,6 +445,7 @@ void MainWindow::setupToolbar()
 
     // Initially disable these buttons (enable after connection)
     radioSample->setEnabled(false);
+    radioSampleSingleShot->setEnabled(false);
     radioExtest->setEnabled(false);
     radioIntest->setEnabled(false);
     radioBypass->setEnabled(false);
@@ -328,6 +453,10 @@ void MainWindow::setupToolbar()
     btnSetAll1->setEnabled(false);
     btnSetAllZ->setEnabled(false);
     btnSetAll0->setEnabled(false);
+
+    // Permanently disable BYPASS and INTEST modes (not implemented)
+    radioBypass->setToolTip("BYPASS mode - Not available");
+    radioIntest->setToolTip("INTEST mode - Not available");
 }
 
 void MainWindow::setupConnections()
@@ -393,8 +522,10 @@ void MainWindow::setupConnections()
     connect(ui->actionAbout, &QAction::triggered, this, &MainWindow::onAbout);
     
     // Toolbar connections
-    connect(ui->actionInstruction, &QAction::triggered, this, &MainWindow::onInstruction);
-    
+    // Instruction action removed - use Device > Instruction instead if needed
+    // connect(ui->actionInstruction, &QAction::triggered, this, &MainWindow::onInstruction);
+    ui->actionInstruction->setVisible(false);  // Hide from toolbar
+
     // Pins panel connections
     connect(ui->comboBoxDevice, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::onDeviceChanged);
@@ -439,8 +570,11 @@ void MainWindow::enableControlsAfterConnection(bool enable)
 
     // Enable JTAG mode selector and quick action buttons
     radioSample->setEnabled(enable && isDeviceInitialized);
+    radioSampleSingleShot->setEnabled(enable && isDeviceInitialized);
     radioExtest->setEnabled(enable && isDeviceInitialized);
-    radioBypass->setEnabled(enable && isDeviceInitialized);
+    // radioIntest and radioBypass permanently disabled (not implemented)
+    radioIntest->setEnabled(false);
+    radioBypass->setEnabled(false);
     btnSetAllSafe->setEnabled(enable && isDeviceInitialized);
     btnSetAll1->setEnabled(enable && isDeviceInitialized);
     btnSetAllZ->setEnabled(enable && isDeviceInitialized);
@@ -571,24 +705,20 @@ void MainWindow::onJTAGConnection()
     ConnectionDialog dialog(adapters, this);
 
     if (dialog.exec() == QDialog::Accepted) {
-        JTAG::AdapterType selectedType = dialog.getSelectedAdapter();
+        JTAG::AdapterDescriptor descriptor = dialog.getSelectedDescriptor();
         uint32_t clockSpeed = dialog.getSelectedClockSpeed();
 
         // 3. Conectar y detectar dispositivo automáticamente
-        if (scanController->connectAdapter(selectedType, clockSpeed)) {
+        if (scanController->connectAdapter(descriptor, clockSpeed)) {
             isAdapterConnected = true;
 
-            // Encontrar nombre del adaptador
-            QString adapterName;
-            for (const auto& adapter : adapters) {
-                if (adapter.type == selectedType) {
-                    adapterName = QString::fromStdString(adapter.name);
-                    break;
-                }
-            }
+            // Use descriptor info directly (includes serial number)
+            QString adapterName = QString::fromStdString(descriptor.name);
+            QString serialInfo = QString::fromStdString(descriptor.serialNumber);
 
-            updateStatusBar(QString("Connected to %1 @ %2 Hz")
+            updateStatusBar(QString("Connected to %1 (%2) @ %3 Hz")
                 .arg(adapterName)
+                .arg(serialInfo)
                 .arg(clockSpeed));
 
             enableControlsAfterConnection(true);
@@ -654,7 +784,7 @@ void MainWindow::onJTAGConnection()
             // Mensaje de error detallado según el tipo de adaptador
             QString errorMsg = "Failed to connect to adapter.\n\n";
 
-            switch (selectedType) {
+            switch (descriptor.type) {
                 case JTAG::AdapterType::JLINK:
                     errorMsg += "J-Link troubleshooting:\n"
                                "• Check J-Link is connected via USB\n"
@@ -728,10 +858,15 @@ void MainWindow::onRun()
     }
 
     if (!isCapturing) {
+        // W2: Limpiar buffers de waveform para nueva captura
+        for (auto& [name, samples] : waveformBuffer) {
+            samples.clear();
+        }
+
         // Entrar en modo SAMPLE para capturar pines (el worker lo maneja)
         if (scanController->enterSAMPLE()) {
             isCapturing = true;
-            captureTimer.start();  // Start waveform timestamp tracking
+            captureTimer.restart();  // W1: Resetear a 0 (no continuar desde antes)
             scanController->startPolling();  // Iniciar worker thread
             updateStatusBar("Running - capturing pin states");
             ui->actionRun->setText("Stop");
@@ -1336,66 +1471,99 @@ void MainWindow::onWaveformAddSignal()
         rows.insert(item->row());
     }
 
-    for (int row : rows) {
-        int waveRow = ui->tableWidgetWaveform->rowCount();
-        ui->tableWidgetWaveform->insertRow(waveRow);
+    // BUG FIX 1: Detectar si es la primera vez que se añaden señales
+    bool wasEmpty = waveformSignals.empty();
 
-        // Copy first column (Name) only - waveform doesn't need all columns
+    for (int row : rows) {
         QTableWidgetItem *sourceItem = ui->tableWidgetPins->item(row, 0);
         if (sourceItem) {
-            ui->tableWidgetWaveform->setItem(waveRow, 0,
-                new QTableWidgetItem(sourceItem->text()));
-
-            // Initialize waveform buffer for this signal
             std::string pinName = sourceItem->text().toStdString();
-            waveformBuffer[pinName].clear();
+
+            // Verificar que no exista ya
+            if (std::find(waveformSignals.begin(), waveformSignals.end(), pinName)
+                == waveformSignals.end()) {
+                waveformSignals.push_back(pinName);
+                waveformBuffer[pinName].clear();
+            }
         }
     }
 
     updateStatusBar(QString("Added %1 signal(s) to Waveform").arg(rows.size()));
+
+    // BUG FIX 1: Redibujar waveform para mostrar nombres y grid
+    // Si era la primera señal, esto inicializa el grid/timeline correctamente
+    if (wasEmpty && !waveformSignals.empty()) {
+        // Primera inicialización del waveform - el grid se calculará correctamente
+        redrawWaveform();
+    } else {
+        // Actualización normal
+        redrawWaveform();
+    }
 }
 
 void MainWindow::onWaveformRemove()
 {
-    QList<QTableWidgetItem*> selectedItems = ui->tableWidgetWaveform->selectedItems();
-    if (selectedItems.isEmpty()) {
-        updateStatusBar("No signals selected");
+    if (waveformSignals.empty()) {
+        updateStatusBar("No signals in waveform");
         return;
     }
 
-    QSet<int> rows;
-    for (auto item : selectedItems) {
-        rows.insert(item->row());
-    }
+    // Crear diálogo con lista de señales
+    QDialog dialog(this);
+    dialog.setWindowTitle("Remove Signals");
+    QVBoxLayout *layout = new QVBoxLayout(&dialog);
 
-    // Get pin names before removing rows
-    std::vector<std::string> removedPins;
-    for (int row : rows) {
-        QTableWidgetItem *nameItem = ui->tableWidgetWaveform->item(row, 0);
-        if (nameItem) {
-            removedPins.push_back(nameItem->text().toStdString());
+    QLabel *label = new QLabel("Select signals to remove:", &dialog);
+    layout->addWidget(label);
+
+    QListWidget *listWidget = new QListWidget(&dialog);
+    listWidget->setSelectionMode(QAbstractItemView::MultiSelection);
+    for (const auto& pinName : waveformSignals) {
+        listWidget->addItem(QString::fromStdString(pinName));
+    }
+    layout->addWidget(listWidget);
+
+    QDialogButtonBox *buttonBox = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    layout->addWidget(buttonBox);
+
+    connect(buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() == QDialog::Accepted) {
+        QList<QListWidgetItem*> selectedItems = listWidget->selectedItems();
+        if (selectedItems.isEmpty()) {
+            updateStatusBar("No signals selected");
+            return;
         }
-    }
 
-    // Remove rows in reverse order
-    QList<int> rowList = rows.values();
-    std::sort(rowList.begin(), rowList.end(), std::greater<int>());
-    for (int row : rowList) {
-        ui->tableWidgetWaveform->removeRow(row);
-    }
+        // Obtener nombres de señales seleccionadas
+        std::vector<std::string> removedPins;
+        for (auto item : selectedItems) {
+            removedPins.push_back(item->text().toStdString());
+        }
 
-    // Clear waveform buffers
-    for (const auto& pin : removedPins) {
-        waveformBuffer.erase(pin);
-    }
+        // Eliminar de waveformSignals
+        for (const auto& pin : removedPins) {
+            waveformSignals.erase(
+                std::remove(waveformSignals.begin(), waveformSignals.end(), pin),
+                waveformSignals.end());
+            waveformBuffer.erase(pin);
+        }
 
-    updateStatusBar(QString("Removed %1 signal(s)").arg(rows.size()));
+        updateStatusBar(QString("Removed %1 signal(s)").arg(removedPins.size()));
+        redrawWaveform();
+    }
 }
 
 void MainWindow::onWaveformRemoveAll()
 {
-    ui->tableWidgetWaveform->setRowCount(0);
+    waveformSignals.clear();
+    waveformBuffer.clear();
     updateStatusBar("Waveform signals cleared");
+
+    // Redibujar waveform (vacío)
+    redrawWaveform();
 }
 
 void MainWindow::onWaveformClear()
@@ -1427,13 +1595,41 @@ void MainWindow::onWaveformZoom()
 void MainWindow::onWaveformZoomIn()
 {
     waveformTimebase /= 2.0;
-    updateStatusBar(QString("Waveform zoom in: %1 s").arg(waveformTimebase));
+    if (waveformTimebase < 0.001) waveformTimebase = 0.001;  // Límite mínimo
+
+    // Actualizar indicador de zoom en toolbar
+    QString zoomText;
+    if (waveformTimebase >= 1.0) {
+        zoomText = QString("%1 s").arg(waveformTimebase, 0, 'f', 1);
+    } else if (waveformTimebase >= 0.001) {
+        zoomText = QString("%1 ms").arg(waveformTimebase * 1000.0, 0, 'f', 1);
+    } else {
+        zoomText = QString("%1 µs").arg(waveformTimebase * 1000000.0, 0, 'f', 1);
+    }
+    ui->actionWaveZoomValue->setText(zoomText);
+
+    updateStatusBar(QString("Waveform zoom: %1/div").arg(zoomText));
+    redrawWaveform();  // ✅ Redibujar con nuevo zoom
 }
 
 void MainWindow::onWaveformZoomOut()
 {
     waveformTimebase *= 2.0;
-    updateStatusBar(QString("Waveform zoom out: %1 s").arg(waveformTimebase));
+    if (waveformTimebase > 100.0) waveformTimebase = 100.0;  // Límite máximo
+
+    // Actualizar indicador de zoom en toolbar
+    QString zoomText;
+    if (waveformTimebase >= 1.0) {
+        zoomText = QString("%1 s").arg(waveformTimebase, 0, 'f', 1);
+    } else if (waveformTimebase >= 0.001) {
+        zoomText = QString("%1 ms").arg(waveformTimebase * 1000.0, 0, 'f', 1);
+    } else {
+        zoomText = QString("%1 µs").arg(waveformTimebase * 1000000.0, 0, 'f', 1);
+    }
+    ui->actionWaveZoomValue->setText(zoomText);
+
+    updateStatusBar(QString("Waveform zoom: %1/div").arg(zoomText));
+    redrawWaveform();  // ✅ Redibujar con nuevo zoom
 }
 
 void MainWindow::onWaveformGoToTime()
@@ -1545,10 +1741,11 @@ void MainWindow::onAbout()
 // TOOLBAR SLOTS
 // ============================================================================
 
-void MainWindow::onInstruction()
-{
-    onDeviceInstruction();
-}
+// Removed - use onDeviceInstruction() directly from Device menu
+// void MainWindow::onInstruction()
+// {
+//     onDeviceInstruction();
+// }
 
 // ============================================================================
 // PINS PANEL SLOTS
@@ -1577,17 +1774,62 @@ void MainWindow::onWaveZoomOut()
 
 void MainWindow::onWaveFit()
 {
-    updateStatusBar("Waveform fit to window");
+    // Calcular duración total de datos capturados
+    double maxTime = 0;
+    for (const auto& [name, samples] : waveformBuffer) {
+        if (!samples.empty()) {
+            maxTime = std::max(maxTime, samples.back().timestamp);
+        }
+    }
+
+    if (maxTime <= 0) {
+        updateStatusBar("No waveform data to fit");
+        return;
+    }
+
+    // Obtener ancho visible del viewport (en pixels)
+    // Ahora todo el viewport está disponible para el diagrama (nombres en vista separada)
+    int availableWidth = ui->graphicsViewWaveform->viewport()->width();
+
+    if (availableWidth <= 0) {
+        updateStatusBar("Viewport too small");
+        return;
+    }
+
+    // Calcular timebase necesario para que maxTime quepa en availableWidth
+    // PIXELS_PER_SECOND = 100.0 / timebase
+    // maxTime * PIXELS_PER_SECOND = availableWidth
+    // maxTime * (100.0 / timebase) = availableWidth
+    // timebase = (maxTime * 100.0) / availableWidth
+
+    waveformTimebase = (maxTime * 100.0) / availableWidth;
+
+    // Añadir margen del 10% para no que no quede pegado al borde
+    waveformTimebase *= 1.1;
+
+    // Actualizar indicador de zoom en toolbar
+    QString zoomText;
+    if (waveformTimebase >= 1.0) {
+        zoomText = QString("%1 s").arg(waveformTimebase, 0, 'f', 1);
+    } else if (waveformTimebase >= 0.001) {
+        zoomText = QString("%1 ms").arg(waveformTimebase * 1000.0, 0, 'f', 1);
+    } else {
+        zoomText = QString("%1 µs").arg(waveformTimebase * 1000000.0, 0, 'f', 1);
+    }
+    ui->actionWaveZoomValue->setText(zoomText);
+
+    updateStatusBar(QString("Fit: %1 s total in view").arg(maxTime, 0, 'f', 2));
+    redrawWaveform();
 }
 
 void MainWindow::onWavePrev()
 {
-    updateStatusBar("Waveform previous");
+    onWaveformPreviousEvent();  // Delegar al método del menú
 }
 
 void MainWindow::onWaveNext()
 {
-    updateStatusBar("Waveform next");
+    onWaveformNextEvent();  // Delegar al método del menú
 }
 
 void MainWindow::onWaveGoto()
@@ -1771,32 +2013,28 @@ void MainWindow::updateControlPanel(const std::vector<JTAG::PinLevel>& pinLevels
 void MainWindow::captureWaveformSample()
 {
     // ==================== PUNTO DE INTEGRACIÓN 13 ====================
-    if (!scanController || waveformBuffer.empty()) return;
+    if (!scanController || waveformSignals.empty()) return;
 
     double currentTime = captureTimer.elapsed() / 1000.0; // Convert ms to seconds
 
-    // Capture sample for each signal in waveform
-    for (int row = 0; row < ui->tableWidgetWaveform->rowCount(); row++) {
-        QTableWidgetItem *nameItem = ui->tableWidgetWaveform->item(row, 0);
-        if (nameItem) {
-            std::string pinName = nameItem->text().toStdString();
-            auto level = scanController->getPin(pinName);
+    // Iterar sobre vector de señales en lugar de tabla
+    for (const std::string& pinName : waveformSignals) {
+        auto level = scanController->getPin(pinName);
 
-            if (level.has_value()) {
-                // Add sample to buffer
-                waveformBuffer[pinName].push_back({currentTime, level.value()});
+        if (level.has_value()) {
+            // Add sample to buffer
+            waveformBuffer[pinName].push_back({currentTime, level.value()});
 
-                // Maintain circular buffer
-                if (waveformBuffer[pinName].size() > MAX_WAVEFORM_SAMPLES) {
-                    waveformBuffer[pinName].pop_front();
-                }
+            // Maintain circular buffer
+            if (waveformBuffer[pinName].size() > MAX_WAVEFORM_SAMPLES) {
+                waveformBuffer[pinName].pop_front();
             }
         }
     }
 
-    // Redraw waveform (throttle to avoid performance issues - every 5th sample)
+    // W4: Redraw waveform (throttle to avoid performance issues - every 2nd sample)
     static int redrawCounter = 0;
-    if (++redrawCounter >= 5) {
+    if (++redrawCounter >= 2) {
         redrawCounter = 0;
         redrawWaveform();
     }
@@ -1805,52 +2043,288 @@ void MainWindow::captureWaveformSample()
 
 void MainWindow::redrawWaveform()
 {
-    waveformScene->clear();
+    // BUG FIX 3: Prevenir redibujado recursivo
+    if (isRedrawing) return;
+    isRedrawing = true;
 
-    const int SIGNAL_HEIGHT = 40;      // Vertical space per signal
+    // BUG FIX 1: Si no hay señales añadidas, mantener waveform vacío (limpio)
+    if (waveformSignals.empty()) {
+        // Limpiar escenas y dejar todo en blanco
+        waveformScene->clear();
+        waveformNamesScene->clear();
+        timelineScene->clear();
+        isRedrawing = false;
+        return;  // NO dibujar grid ni timeline cuando no hay señales
+    }
+
+    waveformScene->clear();
+    waveformNamesScene->clear();
+    timelineScene->clear();
+
+    // FIXED SIGNAL_HEIGHT - Las señales NO se estiran al agrandar ventana
+    const int SIGNAL_HEIGHT = 40;      // Vertical space per signal (FIXED)
     const int HIGH_Y_OFFSET = 10;      // Y offset for HIGH level
     const int LOW_Y_OFFSET = 30;       // Y offset for LOW level
     const double PIXELS_PER_SECOND = 100.0 / waveformTimebase; // Zoom factor
 
-    // Draw grid
-    QPen gridPen(QColor(220, 220, 220));
-    int maxX = 2000; // Grid width
-    int maxY = ui->tableWidgetWaveform->rowCount() * SIGNAL_HEIGHT;
+    // W7: Helper para calcular Y según nivel (maneja HIGH_Z)
+    auto getLevelY = [&](JTAG::PinLevel level, int yBase) -> int {
+        if (level == JTAG::PinLevel::HIGH) return yBase + HIGH_Y_OFFSET;
+        if (level == JTAG::PinLevel::LOW) return yBase + LOW_Y_OFFSET;
+        return yBase + 20;  // HIGH_Z en posición intermedia
+    };
 
-    for (int x = 0; x < maxX; x += 50) {
-        waveformScene->addLine(x, 0, x, maxY, gridPen);
+    // Calcular timestamp máximo de todos los buffers
+    double maxTime = 0;
+    for (const auto& [name, samples] : waveformBuffer) {
+        if (!samples.empty()) {
+            maxTime = std::max(maxTime, samples.back().timestamp);
+        }
     }
 
-    // Draw each signal
-    for (int row = 0; row < ui->tableWidgetWaveform->rowCount(); row++) {
-        QTableWidgetItem *nameItem = ui->tableWidgetWaveform->item(row, 0);
-        if (!nameItem) continue;
+    // BUG FIX 1: Si no hay datos, establecer escenario inicial consistente
+    bool isEmpty = (maxTime < 0.1);
+    if (isEmpty) {
+        // Calcular tiempo mínimo basado en el ancho del viewport para distribución óptima
+        int viewportWidthPixels = ui->graphicsViewWaveform->viewport()->width();
+        if (viewportWidthPixels <= 0) viewportWidthPixels = 800;  // Fallback razonable
 
-        std::string pinName = nameItem->text().toStdString();
+        // Queremos ~10 marcas visibles, cada una separada por ~100px
+        // Tiempo necesario = (viewportWidth / 100) * waveformTimebase
+        maxTime = std::max(10.0, (viewportWidthPixels / 100.0) * waveformTimebase);
+    }
+
+    // Grid debe cubrir hasta última muestra (SIN NAME_MARGIN, ya que nombres están en vista separada)
+    int maxX = std::max(2000.0, (maxTime + 5.0) * PIXELS_PER_SECOND);
+    int maxY = std::max(40, static_cast<int>(waveformSignals.size() * SIGNAL_HEIGHT));
+
+    // ESTRATEGIA CORRECTA: Calcular viewport visible usando scrollbar position
+    QScrollBar* hScrollBar = ui->graphicsViewWaveform->horizontalScrollBar();
+    int scrollPos = (hScrollBar && !isEmpty) ? hScrollBar->value() : 0;  // Sin scroll si vacío
+    int viewportWidthPixels = ui->graphicsViewWaveform->viewport()->width();
+    if (viewportWidthPixels <= 0) viewportWidthPixels = 800;  // Seguridad
+
+    // Calcular rango visible en PIXELS (posición de la escena)
+    int visibleStartX = scrollPos;
+    int visibleEndX = scrollPos + viewportWidthPixels;
+
+    // Convertir a tiempo
+    double visibleStartTime = visibleStartX / PIXELS_PER_SECOND;
+    double visibleEndTime = visibleEndX / PIXELS_PER_SECOND;
+    double visibleTimeRange = visibleEndTime - visibleStartTime;
+
+    // VALIDACIÓN: Asegurar rango mínimo para evitar divisiones por 0
+    if (visibleTimeRange < 0.0001 || !std::isfinite(visibleTimeRange)) {
+        visibleTimeRange = 10.0;  // Fallback a 10 segundos
+        visibleStartTime = 0.0;
+        visibleEndTime = 10.0;
+    }
+
+    // Grid automático - ~10 marcas MAYORES con números
+    const int TARGET_MAJOR_DIVISIONS = 10;
+    double rawInterval = visibleTimeRange / TARGET_MAJOR_DIVISIONS;
+
+    // VALIDACIÓN: rawInterval debe ser > 0
+    if (rawInterval <= 0 || !std::isfinite(rawInterval)) {
+        rawInterval = 1.0;  // Fallback a 1 segundo
+    }
+
+    // BUG FIX 2: Redondear a valores "bonitos" con soporte para escalas muy pequeñas
+    double magnitude, normalized, multiplier;
+
+    // Proteger contra rawInterval inválido
+    if (rawInterval <= 0 || !std::isfinite(rawInterval)) {
+        magnitude = 1.0;
+        normalized = 1.0;
+        multiplier = 1.0;
+    } else {
+        magnitude = std::pow(10.0, std::floor(std::log10(rawInterval)));
+        normalized = rawInterval / magnitude;
+
+        if (normalized <= 1.5) {
+            multiplier = 1.0;
+        } else if (normalized <= 3.0) {
+            multiplier = 2.0;
+        } else if (normalized <= 7.0) {
+            multiplier = 5.0;
+        } else {
+            multiplier = 10.0;
+        }
+    }
+
+    double gridMajorInterval = multiplier * magnitude;
+    double gridMinorInterval = gridMajorInterval / 5.0;
+
+    // VALIDACIÓN FINAL: Asegurar intervalos válidos (permitir hasta nanosegundos)
+    if (gridMajorInterval <= 0 || !std::isfinite(gridMajorInterval) || gridMajorInterval > 1000.0) {
+        // Si el intervalo es inválido o demasiado grande, usar 1 segundo
+        gridMajorInterval = 1.0;
+        gridMinorInterval = 0.2;
+    }
+    // Para zoom muy profundo, asegurar mínimo razonable (1 nanosegundo)
+    if (gridMajorInterval < 1e-9) {
+        gridMajorInterval = 1e-9;
+        gridMinorInterval = 2e-10;
+    }
+
+    // BUG FIX 2: Determinar unidad y decimales (soporte para nanosegundos)
+    int decimals;
+    QString timeUnit;
+    if (gridMajorInterval >= 1.0) {
+        timeUnit = "s";
+        decimals = (gridMajorInterval >= 10.0) ? 0 : 1;
+    } else if (gridMajorInterval >= 0.001) {
+        timeUnit = "ms";
+        decimals = (gridMajorInterval >= 0.01) ? 0 : 1;
+    } else if (gridMajorInterval >= 0.000001) {
+        timeUnit = "µs";
+        decimals = (gridMajorInterval >= 0.00001) ? 0 : 1;
+    } else {
+        timeUnit = "ns";
+        decimals = (gridMajorInterval >= 0.00000001) ? 0 : 1;
+    }
+
+    // Calcular inicio del grid alineado al rango visible (con margen pequeño)
+    double gridStart = std::floor((visibleStartTime - gridMajorInterval) / gridMajorInterval) * gridMajorInterval;
+    if (gridStart < 0) gridStart = 0;
+
+    double gridEnd = visibleEndTime + gridMajorInterval;
+
+    // Dibujar SOLO en el rango visible + margen (optimización crítica)
+    QPen gridMajorPen(QColor(180, 180, 180), 1);
+    QPen gridMinorPen(QColor(230, 230, 230), 1);
+
+    // Grid MENOR (subdivisiones sin números) - SOLO en rango visible
+    for (double t = gridStart; t <= gridEnd; t += gridMinorInterval) {
+        if (t < 0) continue;
+        int x = static_cast<int>(t * PIXELS_PER_SECOND);
+        waveformScene->addLine(x, 0, x, maxY, gridMinorPen);
+        timelineScene->addLine(x, 0, x, 50, gridMinorPen);
+    }
+
+    // Grid MAYOR (marcas principales) - SOLO en rango visible
+    for (double t = gridStart; t <= gridEnd; t += gridMajorInterval) {
+        if (t < 0) continue;
+        int x = static_cast<int>(t * PIXELS_PER_SECOND);
+        waveformScene->addLine(x, 0, x, maxY, gridMajorPen);
+        timelineScene->addLine(x, 0, x, 50, gridMajorPen);
+    }
+
+    // W8: Dibujar etiquetas de tiempo SOLO en rango visible
+    QPen timelinePen(QColor(100, 100, 100));
+
+    // Dibujar etiquetas SOLO en marcas mayores visibles (optimización)
+    for (double t = gridStart; t <= gridEnd; t += gridMajorInterval) {
+        if (t < 0) continue;
+
+        int x = static_cast<int>(t * PIXELS_PER_SECOND);
+
+        // Línea vertical de tick más oscura
+        timelineScene->addLine(x, 30, x, 48, timelinePen);
+
+        // BUG FIX 2: Etiqueta de tiempo con unidad dinámica (soporte para nanosegundos)
+        QString timeLabel;
+        if (timeUnit == "s") {
+            timeLabel = QString("%1 s").arg(t, 0, 'f', decimals);
+        } else if (timeUnit == "ms") {
+            timeLabel = QString("%1 ms").arg(t * 1000.0, 0, 'f', decimals);
+        } else if (timeUnit == "µs") {
+            timeLabel = QString("%1 µs").arg(t * 1000000.0, 0, 'f', decimals);
+        } else {  // ns
+            timeLabel = QString("%1 ns").arg(t * 1000000000.0, 0, 'f', decimals);
+        }
+
+        QGraphicsTextItem *timeText = timelineScene->addText(timeLabel);
+        timeText->setPos(x - 25, 5);
+        timeText->setDefaultTextColor(QColor(40, 40, 40));
+        timeText->setFont(QFont("Arial", 9, QFont::Bold));
+    }
+
+    // Línea horizontal base de la timeline
+    timelineScene->addLine(0, 40, maxX, 40, QPen(QColor(150, 150, 150), 2));
+
+    // Draw each signal
+    for (int row = 0; row < waveformSignals.size(); row++) {
+        std::string pinName = waveformSignals[row];
         auto& samples = waveformBuffer[pinName];
-        if (samples.empty()) continue;
 
         int yBase = row * SIGNAL_HEIGHT;
         int yHigh = yBase + HIGH_Y_OFFSET;
         int yLow = yBase + LOW_Y_OFFSET;
 
-        // Draw signal name label
-        QGraphicsTextItem *label = waveformScene->addText(QString::fromStdString(pinName));
-        label->setPos(5, yBase + 5);
+        // Dibujar nombre en escena separada (waveformNamesScene)
+        QGraphicsTextItem *label = waveformNamesScene->addText(QString::fromStdString(pinName));
+        label->setPos(10, yBase + 10);
         label->setDefaultTextColor(Qt::black);
+        label->setFont(QFont("Arial", 10, QFont::Bold));
+
+        // Dibujar separador horizontal en escena de nombres
+        waveformNamesScene->addLine(0, yBase + SIGNAL_HEIGHT, 150, yBase + SIGNAL_HEIGHT,
+                                   QPen(QColor(180, 180, 180)));
+
+        if (samples.empty()) continue;
+
+        // Dibujar líneas de referencia para HIGH y LOW (muy tenues)
+        QPen referencePen(QColor(230, 230, 230), 1, Qt::DashLine);
+        waveformScene->addLine(0, yHigh, maxX, yHigh, referencePen);  // HIGH level
+        waveformScene->addLine(0, yLow, maxX, yLow, referencePen);    // LOW level
 
         // Draw waveform
         QPen signalPen(Qt::blue, 2);
 
-        for (size_t i = 1; i < samples.size(); i++) {
+        // W6: Si solo hay 1 muestra, dibujar punto/marcador
+        if (samples.size() == 1) {
+            double x = samples[0].timestamp * PIXELS_PER_SECOND;
+            int y = getLevelY(samples[0].level, yBase);
+
+            // Dibujar pequeño círculo como marcador
+            waveformScene->addEllipse(x - 3, y - 3, 6, 6, signalPen, QBrush(Qt::blue));
+            continue;  // Saltar al siguiente pin
+        }
+
+        // BUG FIX 3: CULLING - Solo dibujar muestras en el rango visible
+        // Buscar índice de inicio (primera muestra visible)
+        size_t startIdx = 0;
+        for (size_t i = 0; i < samples.size(); i++) {
+            if (samples[i].timestamp >= visibleStartTime - 1.0) {  // -1s margen
+                startIdx = (i > 0) ? i - 1 : 0;  // Incluir muestra anterior para continuidad
+                break;
+            }
+        }
+
+        // Buscar índice de fin (última muestra visible)
+        size_t endIdx = samples.size();
+        for (size_t i = startIdx; i < samples.size(); i++) {
+            if (samples[i].timestamp > visibleEndTime + 1.0) {  // +1s margen
+                endIdx = std::min(i + 1, samples.size());  // Incluir muestra siguiente
+                break;
+            }
+        }
+
+        // Calcular decimación si hay demasiadas muestras visibles
+        size_t visibleCount = endIdx - startIdx;
+        size_t step = 1;
+        const size_t MAX_VISIBLE_SAMPLES = 5000;
+        if (visibleCount > MAX_VISIBLE_SAMPLES) {
+            step = visibleCount / MAX_VISIBLE_SAMPLES;
+        }
+
+        // Dibujar solo muestras en el rango visible (con decimación si es necesario)
+        for (size_t i = startIdx + 1; i < endIdx; i += step) {
             double x1 = samples[i-1].timestamp * PIXELS_PER_SECOND;
             double x2 = samples[i].timestamp * PIXELS_PER_SECOND;
 
-            int y1 = (samples[i-1].level == JTAG::PinLevel::HIGH) ? yHigh : yLow;
-            int y2 = (samples[i].level == JTAG::PinLevel::HIGH) ? yHigh : yLow;
+            int y1 = getLevelY(samples[i-1].level, yBase);
+            int y2 = getLevelY(samples[i].level, yBase);
 
-            // Horizontal line (hold previous level)
-            waveformScene->addLine(x1, y1, x2, y1, signalPen);
+            // W7: Dibujar con estilo diferente para HIGH_Z
+            if (samples[i-1].level == JTAG::PinLevel::HIGH_Z) {
+                QPen zPen(Qt::gray, 2, Qt::DashLine);
+                waveformScene->addLine(x1, y1, x2, y1, zPen);
+            } else {
+                // Horizontal line (hold previous level)
+                waveformScene->addLine(x1, y1, x2, y1, signalPen);
+            }
 
             // Vertical line (transition)
             if (y1 != y2) {
@@ -1862,6 +2336,16 @@ void MainWindow::redrawWaveform()
         waveformScene->addLine(0, yBase + SIGNAL_HEIGHT, maxX, yBase + SIGNAL_HEIGHT,
                               QPen(QColor(180, 180, 180)));
     }
+
+    // Configurar tamaños de las escenas
+    waveformScene->setSceneRect(0, 0, maxX, maxY);
+    waveformNamesScene->setSceneRect(0, 0, 150, maxY);
+    timelineScene->setSceneRect(0, 0, maxX, 50);
+
+    // BUG FIX 4: NO hacer auto-scroll automático - interfiere con zoom/scroll manual
+    // El usuario puede navegar manualmente o usar botones de navegación
+
+    isRedrawing = false;
 }
 
 // ============================================================================
@@ -1969,19 +2453,24 @@ void MainWindow::onJTAGModeChanged(int modeId)
         modeName = "SAMPLE";
         showControlPanel = false;  // Ocultar
         break;
-    case 1:  // EXTEST
+    case 1:  // SAMPLE SINGLE SHOT
+        targetMode = JTAG::ScanMode::SAMPLE_SINGLE_SHOT;
+        modeName = "SAMPLE (Single Shot)";
+        showControlPanel = false;  // Ocultar
+        break;
+    case 2:  // EXTEST
         targetMode = JTAG::ScanMode::EXTEST;
         modeName = "EXTEST";
         showControlPanel = true;   // Mostrar
         enableControlPanel = true; // Habilitar edición
         break;
-    case 2:  // INTEST
+    case 3:  // INTEST
         targetMode = JTAG::ScanMode::INTEST;
         modeName = "INTEST";
         showControlPanel = true;   // Mostrar
         enableControlPanel = true; // Habilitar edición
         break;
-    case 3:  // BYPASS
+    case 4:  // BYPASS
         targetMode = JTAG::ScanMode::BYPASS;
         modeName = "BYPASS";
         showControlPanel = false;  // Ocultar
@@ -1992,8 +2481,9 @@ void MainWindow::onJTAGModeChanged(int modeId)
     scanController->setScanMode(targetMode);
 
     currentJTAGMode = (modeId == 0) ? JTAGMode::SAMPLE :
-                      (modeId == 1) ? JTAGMode::EXTEST :
-                      (modeId == 2) ? JTAGMode::INTEST :
+                      (modeId == 1) ? JTAGMode::SAMPLE_SINGLE_SHOT :
+                      (modeId == 2) ? JTAGMode::EXTEST :
+                      (modeId == 3) ? JTAGMode::INTEST :
                       JTAGMode::BYPASS;
 
     // Controlar visibilidad del Control Panel

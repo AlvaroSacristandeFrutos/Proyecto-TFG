@@ -4,6 +4,8 @@
 #include <cstring>
 #include <filesystem>
 #include <algorithm>
+#include <fstream>
+#include <chrono>
 
 namespace fs = std::filesystem;
 
@@ -21,73 +23,436 @@ namespace JTAG {
 #endif
     // ---------------------------------------
 
+    // Static cache variable initialization
+    std::optional<JLinkAdapter::DLLCache> JLinkAdapter::s_dllCache = std::nullopt;
+
     JLinkAdapter::JLinkAdapter() {}
 
     JLinkAdapter::~JLinkAdapter() {
         close();
     }
 
-    // Función helper para buscar recursivamente la DLL de J-Link
-    std::string JLinkAdapter::findJLinkDLL() {
-#if defined(_WIN32)
-        // 1. PRIORIDAD ALTA: Buscar recursivamente en directorio SEGGER
-        std::string seggerPath = "C:\\Program Files\\SEGGER";
-        std::cout << "[JLink] Searching recursively in: " << seggerPath << "\n";
+    // --- CACHE VALIDATION ---
+    bool JLinkAdapter::DLLCache::isValid() const {
+        auto now = std::chrono::system_clock::now();
+        auto age = std::chrono::duration_cast<std::chrono::hours>(now - timestamp);
+        return age.count() < 24;  // Cache válido por 24 horas
+    }
 
-        std::vector<std::string> foundDLLs;
-
+    // --- SAVE CACHE TO FILE ---
+    void JLinkAdapter::saveCacheToFile(const std::string& file, const std::string& path) {
         try {
-            if (fs::exists(seggerPath) && fs::is_directory(seggerPath)) {
-                for (const auto& entry : fs::recursive_directory_iterator(seggerPath, fs::directory_options::skip_permission_denied)) {
-                    if (entry.is_regular_file()) {
-                        std::string filename = entry.path().filename().string();
-                        if (filename == "JLink_x64.dll" || filename == "JLinkARM.dll") {
-                            foundDLLs.push_back(entry.path().string());
-                        }
-                    }
+            std::ofstream ofs(file);
+            if (ofs.is_open()) {
+                auto now = std::chrono::system_clock::now();
+                auto timestamp = std::chrono::system_clock::to_time_t(now);
+                ofs << path << "\n" << timestamp << "\n";
+                ofs.close();
+                std::cout << "[JLink] Cache saved to: " << file << "\n";
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[JLink] Error saving cache: " << e.what() << "\n";
+        }
+    }
+
+    // --- LOAD CACHE FROM FILE ---
+    JLinkAdapter::DLLCache JLinkAdapter::loadCacheFromFile(const std::string& file) {
+        DLLCache cache;
+        try {
+            std::ifstream ifs(file);
+            if (ifs.is_open()) {
+                std::string path;
+                std::time_t timestamp;
+                std::getline(ifs, path);
+                ifs >> timestamp;
+                ifs.close();
+
+                cache.path = path;
+                cache.timestamp = std::chrono::system_clock::from_time_t(timestamp);
+
+                if (cache.isValid() && fs::exists(cache.path)) {
+                    std::cout << "[JLink] Cache loaded from file: " << cache.path << "\n";
+                    return cache;
+                } else {
+                    std::cout << "[JLink] Cache expired or path invalid\n";
                 }
             }
         } catch (const std::exception& e) {
-            std::cerr << "[JLink] Error searching SEGGER directory: " << e.what() << "\n";
+            std::cerr << "[JLink] Error loading cache: " << e.what() << "\n";
         }
+        return DLLCache{};  // Return empty cache
+    }
 
-        // Priorizar: 1) JLink_x64.dll, 2) Versiones más recientes (V890 > V884)
-        if (!foundDLLs.empty()) {
-            std::cout << "[JLink] Found " << foundDLLs.size() << " DLLs:\n";
-            for (const auto& dll : foundDLLs) {
-                std::cout << "[JLink]   - " << dll << "\n";
-            }
+    // --- RECURSIVE SEARCH WITH BLACKLIST AND TIMEOUT ---
+    std::string JLinkAdapter::searchRecursive(const std::string& basePath, int maxDepth, int timeoutMs) {
+        auto startTime = std::chrono::steady_clock::now();
 
-            // Ordenar: primero x64, luego versiones más altas
-            std::sort(foundDLLs.begin(), foundDLLs.end(), [](const std::string& a, const std::string& b) {
-                bool aIs64 = a.find("JLink_x64.dll") != std::string::npos;
-                bool bIs64 = b.find("JLink_x64.dll") != std::string::npos;
-                if (aIs64 != bIs64) return aIs64; // x64 primero
-                return a > b; // Versión más alta (alfabéticamente: V890 > V884)
-            });
-
-            std::string bestDLL = foundDLLs[0];
-            std::cout << "[JLink] Selected DLL: " << bestDLL << "\n";
-            return bestDLL;
-        }
-
-        // 2. FALLBACK: Buscar en otras ubicaciones comunes
-        std::cout << "[JLink] DLL not found in SEGGER, trying fallback locations...\n";
-        const char* fallbackPaths[] = {
-            "C:\\Program Files (x86)\\SEGGER\\JLink\\JLink_x64.dll",
-            "C:\\Program Files\\SEGGER\\JLink\\JLink_x64.dll"
+        // Blacklist de directorios a evitar
+        std::vector<std::string> blacklist = {
+            "Windows", "System32", "$Recycle.Bin", "node_modules",
+            "ProgramData", "Users", "AppData"
         };
 
-        for (const char* path : fallbackPaths) {
-            if (fs::exists(path)) {
-                std::cout << "[JLink] Found DLL at fallback: " << path << "\n";
-                return std::string(path);
+        try {
+            if (!fs::exists(basePath) || !fs::is_directory(basePath)) {
+                return "";
             }
+
+            std::cout << "[JLink] Searching recursively in: " << basePath
+                     << " (maxDepth=" << maxDepth << ", timeout=" << timeoutMs << "ms)\n";
+
+            // Use error code instead of exceptions for better Unicode handling
+            std::error_code ec;
+            for (const auto& entry : fs::recursive_directory_iterator(
+                basePath,
+                fs::directory_options::skip_permission_denied,
+                ec)) {
+
+                // Check timeout
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - startTime);
+                if (elapsed.count() > timeoutMs) {
+                    std::cout << "[JLink] Search timeout after " << elapsed.count() << "ms\n";
+                    return "";
+                }
+
+                // Check depth limit
+                try {
+                    auto relativePath = entry.path().lexically_relative(basePath);
+                    int depth = std::distance(relativePath.begin(), relativePath.end());
+                    if (depth > maxDepth) {
+                        continue;
+                    }
+                } catch (...) {
+                    // Skip entries with path issues
+                    continue;
+                }
+
+                // Check blacklist
+                bool isBlacklisted = false;
+                std::string pathStr;
+                try {
+                    pathStr = entry.path().string();
+                } catch (...) {
+                    // Skip entries with encoding issues
+                    continue;
+                }
+
+                for (const auto& blacklisted : blacklist) {
+                    if (pathStr.find(blacklisted) != std::string::npos) {
+                        isBlacklisted = true;
+                        break;
+                    }
+                }
+                if (isBlacklisted) continue;
+
+                // Check if it's the DLL we're looking for
+                try {
+                    if (entry.is_regular_file()) {
+                        std::string filename = entry.path().filename().string();
+                        if (filename == "JLink_x64.dll" || filename == "JLinkARM.dll") {
+                            std::cout << "[JLink] Found DLL: " << entry.path().string() << "\n";
+                            return entry.path().string();
+                        }
+                    }
+                } catch (...) {
+                    // Skip entries with access/encoding issues
+                    continue;
+                }
+            }
+
+            // Check if the iterator itself had errors
+            if (ec) {
+                std::cerr << "[JLink] Iterator error: " << ec.message() << "\n";
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[JLink] Error in recursive search: " << e.what() << "\n";
+        }
+
+        return "";
+    }
+
+    // Función helper para buscar recursivamente la DLL de J-Link con caché
+    std::string JLinkAdapter::findJLinkDLL() {
+#if defined(_WIN32)
+        std::cout << "[JLink] Starting DLL search with caching strategy...\n";
+        std::cout << "[JLink] Looking for: " << JLINK_LIB_NAME << "\n";
+
+        // 1. Check memory cache
+        if (s_dllCache.has_value() && s_dllCache->isValid() && fs::exists(s_dllCache->path)) {
+            // Validate that the cached DLL can actually be loaded
+            HMODULE testHandle = LoadLibraryA(s_dllCache->path.c_str());
+            if (testHandle) {
+                FreeLibrary(testHandle);
+                std::cout << "[JLink] Using memory cache: " << s_dllCache->path << "\n";
+                return s_dllCache->path;
+            } else {
+                std::cout << "[JLink] Memory cached DLL cannot be loaded, invalidating\n";
+                s_dllCache.reset();
+            }
+        }
+
+        // 2. Check disk cache
+        std::string cacheFile = std::string(getenv("TEMP")) + "\\jlink_dll_cache.txt";
+        DLLCache diskCache = loadCacheFromFile(cacheFile);
+        if (!diskCache.path.empty()) {
+            // Validate that the cached DLL can actually be loaded
+            HMODULE testHandle = LoadLibraryA(diskCache.path.c_str());
+            if (testHandle) {
+                FreeLibrary(testHandle);
+                std::cout << "[JLink] Disk cache validated and working\n";
+                s_dllCache = diskCache;
+                return diskCache.path;
+            } else {
+                std::cout << "[JLink] Cached DLL exists but cannot be loaded, invalidating cache\n";
+                // Delete invalid cache file
+                try {
+                    fs::remove(cacheFile);
+                } catch (...) {}
+            }
+        }
+
+        // 3. Check project directory (local DLLs)
+        std::cout << "[JLink] Checking project directory...\n";
+        char exePath[MAX_PATH];
+        if (GetModuleFileNameA(NULL, exePath, MAX_PATH)) {
+            fs::path exeDir = fs::path(exePath).parent_path();
+
+            // Check in executable directory
+            std::string localDLL = (exeDir / JLINK_LIB_NAME).string();
+            if (fs::exists(localDLL)) {
+                HMODULE testHandle = LoadLibraryA(localDLL.c_str());
+                if (testHandle) {
+                    FreeLibrary(testHandle);
+                    std::cout << "[JLink] Found in project directory: " << localDLL << "\n";
+                    DLLCache newCache{localDLL, std::chrono::system_clock::now()};
+                    s_dllCache = newCache;
+                    saveCacheToFile(cacheFile, localDLL);
+                    return localDLL;
+                }
+            }
+
+            // Also check in project root (parent directory)
+            std::string projectDLL = (exeDir.parent_path() / JLINK_LIB_NAME).string();
+            if (fs::exists(projectDLL)) {
+                HMODULE testHandle = LoadLibraryA(projectDLL.c_str());
+                if (testHandle) {
+                    FreeLibrary(testHandle);
+                    std::cout << "[JLink] Found in project root: " << projectDLL << "\n";
+                    DLLCache newCache{projectDLL, std::chrono::system_clock::now()};
+                    s_dllCache = newCache;
+                    saveCacheToFile(cacheFile, projectDLL);
+                    return projectDLL;
+                }
+            }
+        }
+
+        // 4. Try LoadLibrary from PATH (fastest - no file search)
+        std::cout << "[JLink] Trying LoadLibrary from PATH...\n";
+        HMODULE testHandle = LoadLibraryA(JLINK_LIB_NAME);
+        if (testHandle) {
+            char pathBuf[MAX_PATH];
+            if (GetModuleFileNameA(testHandle, pathBuf, MAX_PATH)) {
+                std::string foundPath(pathBuf);
+                FreeLibrary(testHandle);
+                std::cout << "[JLink] Found in PATH: " << foundPath << "\n";
+
+                // Save to cache
+                DLLCache newCache{foundPath, std::chrono::system_clock::now()};
+                s_dllCache = newCache;
+                saveCacheToFile(cacheFile, foundPath);
+
+                return foundPath;
+            }
+            FreeLibrary(testHandle);
+        }
+
+        // 5. Search SEGGER subdirectories (fast - no deep recursion, just 1 level)
+        std::cout << "[JLink] Scanning SEGGER installation directories...\n";
+        std::vector<std::string> seggerBasePaths = {
+            "C:\\Program Files\\SEGGER",
+            "C:\\Program Files (x86)\\SEGGER"
+        };
+
+        for (const auto& basePath : seggerBasePaths) {
+            try {
+                if (!fs::exists(basePath) || !fs::is_directory(basePath)) {
+                    continue;
+                }
+
+                // Iterate through subdirectories (1 level deep only)
+                for (const auto& entry : fs::directory_iterator(basePath)) {
+                    if (!entry.is_directory()) continue;
+
+                    // Check if DLL exists in this subdirectory
+                    std::string dllPath = entry.path().string() + "\\" + JLINK_LIB_NAME;
+                    if (fs::exists(dllPath)) {
+                        std::cout << "[JLink] Found in: " << dllPath << "\n";
+
+                        // Validate it can be loaded
+                        HMODULE testHandle = LoadLibraryA(dllPath.c_str());
+                        if (testHandle) {
+                            FreeLibrary(testHandle);
+                            std::cout << "[JLink] DLL validated successfully\n";
+                            DLLCache newCache{dllPath, std::chrono::system_clock::now()};
+                            s_dllCache = newCache;
+                            saveCacheToFile(cacheFile, dllPath);
+                            return dllPath;
+                        } else {
+                            std::cout << "[JLink] DLL found but cannot be loaded, skipping\n";
+                        }
+                    }
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "[JLink] Error scanning " << basePath << ": " << e.what() << "\n";
+            }
+        }
+
+        // 6. Deep search in Program Files\SEGGER (fallback if DLL is in subdirectories)
+        std::cout << "[JLink] Deep search in Program Files\\SEGGER (checking subdirectories)...\n";
+        std::string result = searchRecursive("C:\\Program Files\\SEGGER", 10, 60000);
+        if (!result.empty()) {
+            DLLCache newCache{result, std::chrono::system_clock::now()};
+            s_dllCache = newCache;
+            saveCacheToFile(cacheFile, result);
+            return result;
+        }
+
+        // 7. Deep search in Program Files (x86)\SEGGER (fallback)
+        std::cout << "[JLink] Deep search in Program Files (x86)\\SEGGER (checking subdirectories)...\n";
+        result = searchRecursive("C:\\Program Files (x86)\\SEGGER", 10, 60000);
+        if (!result.empty()) {
+            DLLCache newCache{result, std::chrono::system_clock::now()};
+            s_dllCache = newCache;
+            saveCacheToFile(cacheFile, result);
+            return result;
         }
 
         std::cout << "[JLink] DLL not found in any location\n";
 #endif
         return ""; // No encontrada
+    }
+
+    // --- USB DEVICE SELECTION ---
+    void JLinkAdapter::setTargetSerialNumber(uint32_t serial) {
+        targetSerialNumber = serial;
+        std::cout << "[JLink] Target serial number set to: " << serial << "\n";
+    }
+
+    // --- USB DEVICE ENUMERATION ---
+#if defined(_WIN32)
+    // SEGGER J-Link EMU_INFO structure (from JLINKARM SDK)
+    struct JLINKARM_EMU_INFO {
+        uint32_t SerialNumber;
+        uint32_t Connection;     // 0=USB, 1=IP
+        uint32_t USBAddr;
+        uint8_t  aIPAddr[16];
+        int      Time;
+        uint64_t Time_us;
+        uint32_t HWVersion;
+        uint8_t  abMACAddr[6];
+        char     acProduct[32];
+        char     acNickname[32];
+        char     acFWString[112];
+        char     aDummy[32];
+    };
+#endif
+
+    std::vector<JLinkAdapter::JLinkDeviceInfo> JLinkAdapter::enumerateJLinkDevices() {
+        std::vector<JLinkDeviceInfo> devices;
+
+#if defined(_WIN32)
+        std::cout << "[JLink] Enumerating USB devices...\n";
+
+        // Step 1: Find DLL
+        std::string dllPath = findJLinkDLL();
+        if (dllPath.empty()) {
+            // Try from PATH
+            HMODULE tempHandle = LoadLibraryA(JLINK_LIB_NAME);
+            if (!tempHandle) {
+                std::cout << "[JLink] ERROR: DLL not available for enumeration\n";
+                return devices;
+            }
+
+            // Get DLL path
+            char pathBuf[MAX_PATH];
+            if (GetModuleFileNameA(tempHandle, pathBuf, MAX_PATH)) {
+                dllPath = std::string(pathBuf);
+            }
+            FreeLibrary(tempHandle);
+
+            if (dllPath.empty()) {
+                return devices;
+            }
+        }
+
+        // Step 2: Load DLL temporarily
+        HMODULE tempHandle = LoadLibraryA(dllPath.c_str());
+        if (!tempHandle) {
+            std::cout << "[JLink] ERROR: Failed to load DLL for enumeration\n";
+            return devices;
+        }
+
+        // Step 3: Get JLINKARM_EMU_GetList function pointer
+        typedef unsigned int (JLINK_CALL_CONV* JL_EMU_GETLIST_T)(
+            unsigned int InterfaceMask,
+            JLINKARM_EMU_INFO* pEmuInfo,
+            unsigned int MaxInfos);
+
+        JL_EMU_GETLIST_T pJLINK_EMU_GetList =
+            reinterpret_cast<JL_EMU_GETLIST_T>(
+                GetProcAddress(tempHandle, "JLINKARM_EMU_GetList"));
+
+        if (!pJLINK_EMU_GetList) {
+            std::cout << "[JLink] ERROR: JLINKARM_EMU_GetList not found in DLL\n";
+            FreeLibrary(tempHandle);
+            return devices;
+        }
+
+        // Step 4: First call - count devices
+        unsigned int numDevices = pJLINK_EMU_GetList(
+            1,          // InterfaceMask: 1 = USB only
+            nullptr,    // pEmuInfo: NULL to count
+            0           // MaxInfos: 0 to count
+        );
+
+        std::cout << "[JLink] Found " << numDevices << " J-Link device(s)\n";
+
+        if (numDevices == 0) {
+            FreeLibrary(tempHandle);
+            return devices;
+        }
+
+        // Step 5: Second call - get device info
+        std::vector<JLINKARM_EMU_INFO> emuInfo(numDevices);
+        unsigned int retrieved = pJLINK_EMU_GetList(
+            1,                  // InterfaceMask: 1 = USB only
+            emuInfo.data(),     // pEmuInfo: buffer
+            numDevices          // MaxInfos: buffer size
+        );
+
+        std::cout << "[JLink] Retrieved info for " << retrieved << " device(s)\n";
+
+        // Step 6: Convert to JLinkDeviceInfo
+        for (unsigned int i = 0; i < retrieved; ++i) {
+            JLinkDeviceInfo info;
+            info.serialNumber = emuInfo[i].SerialNumber;
+            info.productName = std::string(emuInfo[i].acProduct);
+            info.firmwareVersion = std::string(emuInfo[i].acFWString);
+            info.isUSB = (emuInfo[i].Connection == 0);
+
+            devices.push_back(info);
+
+            std::cout << "[JLink]   Device " << i << ": "
+                     << info.productName << " (S/N: " << info.serialNumber << ")"
+                     << " FW: " << info.firmwareVersion << "\n";
+        }
+
+        // Step 7: Clean up
+        FreeLibrary(tempHandle);
+#endif
+
+        return devices;
     }
 
     // Método estático para verificar si la DLL existe en el sistema
@@ -123,23 +488,6 @@ namespace JTAG {
     }
 
     bool JLinkAdapter::isDeviceConnected() {
-        // TEMPORAL: Retornar true si la DLL está disponible
-        // Esto es equivalente al comportamiento anterior para testing
-        // El usuario puede verificar manualmente si su J-Link está conectado
-
-        bool dllAvailable = isLibraryAvailable();
-        std::cout << "[JLink] isDeviceConnected: DLL available = " << (dllAvailable ? "YES" : "NO") << "\n";
-
-        if (!dllAvailable) {
-            return false;
-        }
-
-        std::cout << "[JLink] isDeviceConnected: Returning TRUE (DLL detection mode for testing)\n";
-        std::cout << "[JLink] NOTE: Actual USB device detection would require JLINKARM_EMU_GetList()\n";
-
-        return true;  // TEMPORAL: Para que aparezca en la lista si la DLL existe
-
-#if 0  // Código anterior con EMU_GetList (comentado temporalmente)
         // Paso 1: Verificar que DLL existe (prerequisito)
         if (!isLibraryAvailable()) {
             std::cout << "[JLink] isDeviceConnected: DLL not available\n";
@@ -208,7 +556,6 @@ namespace JTAG {
         dlclose(tempHandle);
         return numDevices > 0;
 #endif
-#endif  // Fin del #if 0
     }
 
     bool JLinkAdapter::loadLibrary() {
@@ -246,11 +593,21 @@ namespace JTAG {
         pJLINK_JTAG_StoreGetRaw = reinterpret_cast<JL_JTAG_STOREGETRAW_T>(getSymbol("JLINKARM_JTAG_StoreGetRaw"));
         pJLINK_JTAG_SyncBits = reinterpret_cast<JL_JTAG_SYNCBITS_T>(getSymbol("JLINKARM_JTAG_SyncBits"));
         pJLINK_SetSpeed = reinterpret_cast<JL_SETSPEED_T>(getSymbol("JLINKARM_SetSpeed"));
+        pJLINK_EMU_SelectByUSBSN = reinterpret_cast<JL_EMU_SELECTBYUSBSN_T>(getSymbol("JLINKARM_EMU_SelectByUSBSN"));
 
         if (!pJLINK_OpenEx || !pJLINK_JTAG_StoreGetRaw) {
             std::cerr << "[JLink] Error: Missing symbols in DLL\n";
             unloadLibrary();
             return false;
+        }
+
+        // Select specific device if serial number is specified
+        if (targetSerialNumber != 0 && pJLINK_EMU_SelectByUSBSN) {
+            std::cout << "[JLink] Selecting device with serial: " << targetSerialNumber << "\n";
+            int result = pJLINK_EMU_SelectByUSBSN(targetSerialNumber);
+            if (result < 0) {
+                std::cerr << "[JLink] Warning: Failed to select device by serial number\n";
+            }
         }
 
         return true;
@@ -289,7 +646,7 @@ namespace JTAG {
             return false;
         }
 
-        if (pJLINK_SetSpeed) pJLINK_SetSpeed(1000);
+        if (pJLINK_SetSpeed) pJLINK_SetSpeed(12000);
 
         connected = true;
         std::cout << "[JLink] Connected via " << JLINK_LIB_NAME << "\n";

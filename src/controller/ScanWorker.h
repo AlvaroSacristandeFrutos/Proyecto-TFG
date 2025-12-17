@@ -14,6 +14,7 @@ namespace JTAG {
     // Definimos los modos posibles
     enum class ScanMode {
         SAMPLE,
+        SAMPLE_SINGLE_SHOT,
         EXTEST,
         INTEST,
         BYPASS
@@ -59,7 +60,7 @@ namespace JTAG {
         DeviceModel* deviceModel;
 
         std::atomic<bool> running{ false };
-        std::atomic<int> pollIntervalMs{ 100 };
+        std::atomic<int> pollIntervalMs{ 50 };
 
         // Estado del modo deseado (Atómico para thread-safety)
         std::atomic<ScanMode> currentMode{ ScanMode::SAMPLE };

@@ -39,10 +39,11 @@ void ConnectionDialog::setupUI(const std::vector<AdapterDescriptor>& adapters) {
 
     // Poblar con adaptadores detectados dinámicamente
     for (const auto& adapter : adapters) {
-        m_adapterCombo->addItem(
-            QString::fromStdString(adapter.name + " - " + adapter.serialNumber),
-            static_cast<int>(adapter.type)
+        QString displayText = QString::fromStdString(
+            adapter.name + " - " + adapter.serialNumber
         );
+        QVariant userData = QVariant::fromValue(adapter);  // Store full descriptor
+        m_adapterCombo->addItem(displayText, userData);
     }
 
     connect(m_adapterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -104,25 +105,29 @@ void ConnectionDialog::setupUI(const std::vector<AdapterDescriptor>& adapters) {
 
 void ConnectionDialog::updateDescription() {
     int index = m_adapterCombo->currentIndex();
-    // Casting seguro
-    AdapterType type = static_cast<AdapterType>(m_adapterCombo->itemData(index).toInt());
+    QVariant userData = m_adapterCombo->itemData(index);
 
-    QString description;
-    switch (type) {
-    case AdapterType::MOCK:
-        description = "<b>Mock Adapter</b><br>Simulation for testing.";
-        break;
-    case AdapterType::JLINK:
-        description = "<b>Segger J-Link</b><br>Professional JTAG probe.";
-        break;
-    case AdapterType::PICO:
-        description = "<b>Raspberry Pi Pico</b><br>Low cost USB-JTAG.";
-        break;
-    default:
-        description = "Unknown adapter.";
-        break;
+    if (userData.canConvert<AdapterDescriptor>()) {
+        AdapterDescriptor descriptor = userData.value<AdapterDescriptor>();
+        AdapterType type = descriptor.type;
+
+        QString description;
+        switch (type) {
+        case AdapterType::MOCK:
+            description = "<b>Mock Adapter</b><br>Simulation for testing.";
+            break;
+        case AdapterType::JLINK:
+            description = "<b>Segger J-Link</b><br>Professional JTAG probe.";
+            break;
+        case AdapterType::PICO:
+            description = "<b>Raspberry Pi Pico</b><br>Low cost USB-JTAG.";
+            break;
+        default:
+            description = "Unknown adapter.";
+            break;
+        }
+        m_descriptionLabel->setText(description);
     }
-    m_descriptionLabel->setText(description);
 }
 
 AdapterType ConnectionDialog::getSelectedAdapter() const {
@@ -136,7 +141,13 @@ void ConnectionDialog::onAdapterChanged(int index) {
 
 void ConnectionDialog::onConnectClicked() {
     int index = m_adapterCombo->currentIndex();
-    m_selectedAdapter = static_cast<AdapterType>(m_adapterCombo->itemData(index).toInt());
+    QVariant userData = m_adapterCombo->itemData(index);
+
+    if (userData.canConvert<AdapterDescriptor>()) {
+        m_selectedDescriptor = userData.value<AdapterDescriptor>();
+        m_selectedAdapter = m_selectedDescriptor.type;
+    }
+
     accept();
 }
 
@@ -146,4 +157,8 @@ void ConnectionDialog::onCancelClicked() {
 
 uint32_t ConnectionDialog::getSelectedClockSpeed() const {
     return m_clockSpeedCombo->currentData().toUInt();
+}
+
+AdapterDescriptor ConnectionDialog::getSelectedDescriptor() const {
+    return m_selectedDescriptor;
 }

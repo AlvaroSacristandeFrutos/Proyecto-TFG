@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cctype>
+#include <iostream>
 
 namespace JTAG {
 
@@ -19,6 +20,39 @@ namespace JTAG {
 
         case AdapterType::JLINK:
             return std::make_unique<JLinkAdapter>();
+
+        case AdapterType::FT2232H:
+            throw std::runtime_error("FT2232HAdapter no implementado aun");
+
+        default:
+            throw std::runtime_error("Tipo de adaptador desconocido");
+        }
+    }
+
+    std::unique_ptr<IJTAGAdapter> AdapterFactory::create(AdapterType type, const std::string& deviceID) {
+        switch (type) {
+        case AdapterType::MOCK:
+            return std::make_unique<MockAdapter>();
+
+        case AdapterType::PICO:
+            return std::make_unique<PicoAdapter>();
+
+        case AdapterType::JLINK: {
+            auto jlink = std::make_unique<JLinkAdapter>();
+
+            // Extract serial number from deviceID (format: "JLINK_12345678")
+            if (!deviceID.empty() && deviceID.find("JLINK_") == 0) {
+                try {
+                    uint32_t serial = std::stoul(deviceID.substr(6));
+                    jlink->setTargetSerialNumber(serial);
+                } catch (const std::exception& e) {
+                    // If parsing fails, just use default (first available)
+                    std::cerr << "[Factory] Warning: Failed to parse J-Link serial from deviceID: " << deviceID << "\n";
+                }
+            }
+
+            return jlink;
+        }
 
         case AdapterType::FT2232H:
             throw std::runtime_error("FT2232HAdapter no implementado aun");
@@ -78,13 +112,48 @@ namespace JTAG {
     }
 
     std::vector<AdapterDescriptor> AdapterFactory::getAvailableAdapters() {
-        // Lista estática - SIEMPRE muestra todos los adaptadores
-        // La verificación de conexión física se hace en open()
-        return {
-            { AdapterType::MOCK,  "Mock Adapter",       "Loopback Simulation" },
-            { AdapterType::JLINK, "SEGGER J-Link",      "JTAG/SWD Debugger" },
-            { AdapterType::PICO,  "Raspberry Pi Pico",  "USB Serial JTAG" }
-        };
+        std::vector<AdapterDescriptor> availableAdapters;
+
+        std::cout << "[Factory] Detecting available JTAG adapters...\n";
+
+        // 1. MOCK: Only in Debug build
+#ifdef _DEBUG
+        std::cout << "[Factory] Adding Mock adapter (Debug build only)\n";
+        availableAdapters.push_back({
+            AdapterType::MOCK,
+            "Mock Adapter",
+            "Debug Only",
+            "MOCK_DEBUG"
+        });
+#endif
+
+        // 2. PICO: USB Detection (already implemented)
+        if (PicoAdapter::isDeviceConnected()) {
+            std::string picoPort = PicoAdapter::findPicoPort();
+            std::cout << "[Factory] Found Raspberry Pi Pico on port: " << picoPort << "\n";
+            availableAdapters.push_back({
+                AdapterType::PICO,
+                "Raspberry Pi Pico",
+                picoPort.empty() ? "USB Device" : picoPort,
+                "PICO_" + picoPort
+            });
+        }
+
+        // 3. JLINK: USB Enumeration
+        auto jlinkDevices = JLinkAdapter::enumerateJLinkDevices();
+        std::cout << "[Factory] Found " << jlinkDevices.size() << " J-Link device(s)\n";
+
+        for (const auto& device : jlinkDevices) {
+            availableAdapters.push_back({
+                AdapterType::JLINK,
+                "SEGGER " + device.productName,
+                "S/N: " + std::to_string(device.serialNumber),
+                "JLINK_" + std::to_string(device.serialNumber)
+            });
+        }
+
+        std::cout << "[Factory] Total available adapters: " << availableAdapters.size() << "\n";
+        return availableAdapters;
     }
 
 } // namespace JTAG

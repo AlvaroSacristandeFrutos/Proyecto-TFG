@@ -25,6 +25,11 @@ public:
     JTAG::AdapterType getSelectedAdapter() const;
     uint32_t getSelectedClockSpeed() const;
 
+    /**
+     * @brief Get the selected adapter descriptor (includes deviceID)
+     */
+    JTAG::AdapterDescriptor getSelectedDescriptor() const;
+
 private slots:
     void onAdapterChanged(int index);
     void onConnectClicked();
@@ -43,6 +48,7 @@ private:
 
     // CORRECCI�N: A�adido namespace JTAG::
     JTAG::AdapterType m_selectedAdapter;
+    JTAG::AdapterDescriptor m_selectedDescriptor;
 };
 
 #endif // CONNECTIONDIALOG_H

@@ -20,6 +20,7 @@ namespace JTAG {
         AdapterType type;
         std::string name;
         std::string serialNumber;
+        std::string deviceID;       // Unique device identifier (e.g., "JLINK_12345678")
     };
 
     // 3. Definir la Interfaz TERCERO
@@ -67,3 +68,7 @@ namespace JTAG {
     };
 
 } // namespace JTAG
+
+// Declarar JTAG::AdapterDescriptor como metatype para Qt signals/slots
+#include <QMetaType>
+Q_DECLARE_METATYPE(JTAG::AdapterDescriptor)

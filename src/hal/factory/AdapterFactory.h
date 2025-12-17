@@ -14,6 +14,7 @@ namespace JTAG {
     public:
         // Factory method principal
         static std::unique_ptr<IJTAGAdapter> create(AdapterType type);
+        static std::unique_ptr<IJTAGAdapter> create(AdapterType type, const std::string& deviceID);
 
         // Helpers de conversión
         static std::unique_ptr<IJTAGAdapter> createFromString(const std::string& typeName);

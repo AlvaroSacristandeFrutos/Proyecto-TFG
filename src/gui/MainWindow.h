@@ -102,7 +102,7 @@ private slots:
     void onAbout();
 
     // Toolbar actions
-    void onInstruction();
+    // void onInstruction();  // Removed - use onDeviceInstruction() instead
 
     // Pins panel actions
     void onDeviceChanged(int index);
@@ -142,6 +142,10 @@ private:
 
     // Graphics scenes for rendering
     QGraphicsScene *waveformScene;
+    QGraphicsScene *waveformNamesScene;  // Scene para nombres de señales (fija)
+    QGraphicsScene *timelineScene;  // Timeline separada (parte superior)
+    QGraphicsView *timelineView;    // Vista para la timeline
+    QGraphicsView *waveformNamesView;  // Vista para nombres (fija, sin scroll horizontal)
 
     // Chip visualization
     ChipVisualizer *chipVisualizer;
@@ -154,6 +158,7 @@ private:
 
     // JTAG Mode selector widgets
     class QRadioButton *radioSample;
+    class QRadioButton *radioSampleSingleShot;
     class QRadioButton *radioExtest;
     class QRadioButton *radioIntest;
     class QRadioButton *radioBypass;
@@ -177,12 +182,13 @@ private:
     bool isDeviceInitialized;
 
     // JTAG Mode state
-    enum class JTAGMode { SAMPLE, EXTEST, INTEST, BYPASS };
+    enum class JTAGMode { SAMPLE, SAMPLE_SINGLE_SHOT, EXTEST, INTEST, BYPASS };
     JTAGMode currentJTAGMode;
     
     // Waveform capture state
     bool isCapturing;
     double waveformTimebase; // in seconds
+    bool isRedrawing; // Flag para prevenir redibujado recursivo
 
     // Transition counters for Watch
     std::map<std::string, int> transitionCounters;  // pinName -> count
@@ -196,6 +202,10 @@ private:
     std::map<std::string, std::deque<WaveformSample>> waveformBuffer;
     QElapsedTimer captureTimer;
     const size_t MAX_WAVEFORM_SAMPLES = 10000;  // Circular buffer limit
+
+    // Waveform signal tracking (replaces tableWidgetWaveform)
+    std::vector<std::string> waveformSignals;  // Lista ordenada de nombres de señales
+    QLabel* waveformZoomLabel;  // Zoom indicator in toolbar
 
     // Helper methods
     void setupConnections();

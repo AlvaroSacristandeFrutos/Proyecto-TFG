@@ -75,6 +75,47 @@ namespace JTAG {
         }
     }
 
+    bool ScanController::connectAdapter(const AdapterDescriptor& descriptor, uint32_t clockSpeed) {
+        if (adapter) disconnectAdapter();
+
+        try {
+            // Use factory with deviceID to create specific adapter instance
+            adapter = AdapterFactory::create(descriptor.type, descriptor.deviceID);
+
+            if (!adapter) return false;
+
+            if (!adapter->open()) {
+                adapter.reset();
+                return false;
+            }
+
+            adapter->setClockSpeed(clockSpeed);
+            initialized = false;
+            detectedIDCODE = 0;
+
+            // NUEVO: Si es MockAdapter, auto-generar DeviceModel
+            if (descriptor.type == AdapterType::MOCK) {
+                createMockDeviceModel();
+                qDebug() << "[ScanController] MockAdapter connected - auto-generated DeviceModel";
+            }
+
+            std::cout << "[ScanController] Connected to: " << descriptor.name
+                      << " (" << descriptor.serialNumber << ")\n";
+
+            return true;
+
+        }
+        catch (const std::exception& e) {
+            std::cerr << "[ScanController] Exception connecting adapter: " << e.what() << "\n";
+            adapter.reset();
+            return false;
+        }
+        catch (...) {
+            adapter.reset();
+            return false;
+        }
+    }
+
     void ScanController::disconnectAdapter() {
         if (adapter) {
             adapter->close();
@@ -193,6 +234,8 @@ namespace JTAG {
                 this, &ScanController::onPinsUpdated, Qt::QueuedConnection);
         connect(scanWorker, &ScanWorker::errorOccurred,
                 this, &ScanController::onWorkerError, Qt::QueuedConnection);
+        connect(scanWorker, &ScanWorker::stopped,
+                this, &ScanController::onWorkerStopped, Qt::QueuedConnection);
 
         initialized = true;
         return true;
@@ -505,6 +548,16 @@ namespace JTAG {
         emit errorOccurred(message);
     }
 
+    void ScanController::onWorkerStopped() {
+        qDebug() << "[ScanController::onWorkerStopped] Worker stopped (single-shot complete)";
+        // Detener el thread cuando el worker se detiene (para modo single-shot)
+        if (workerThread && workerThread->isRunning()) {
+            workerThread->quit();
+            workerThread->wait();
+            qDebug() << "[ScanController::onWorkerStopped] Thread stopped";
+        }
+    }
+
     void ScanController::createMockDeviceModel() {
         qDebug() << "[ScanController] Creating mock DeviceModel for MockAdapter";
 
@@ -561,6 +614,18 @@ namespace JTAG {
     void ScanController::setScanMode(ScanMode mode) {
         if (scanWorker) {
             scanWorker->setScanMode(mode);
+
+            // Determinar si el modo requiere que el thread esté corriendo
+            bool needsRunningThread = (mode == ScanMode::SAMPLE ||
+                                      mode == ScanMode::SAMPLE_SINGLE_SHOT ||
+                                      mode == ScanMode::EXTEST ||
+                                      mode == ScanMode::INTEST);
+
+            // Si necesita thread y no está corriendo, iniciarlo
+            if (needsRunningThread && workerThread && !workerThread->isRunning()) {
+                qDebug() << "[ScanController] Starting thread for mode:" << static_cast<int>(mode);
+                workerThread->start();
+            }
         }
     }
 

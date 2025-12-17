@@ -32,6 +32,7 @@ namespace JTAG {
 
         // Gestión de Adaptador
         bool connectAdapter(AdapterType type, uint32_t clockSpeed = 1000000);
+        bool connectAdapter(const AdapterDescriptor& descriptor, uint32_t clockSpeed);
         void disconnectAdapter();
         bool isConnected() const;
         std::string getAdapterInfo() const;
@@ -107,6 +108,7 @@ namespace JTAG {
         // Slots para recibir señales del worker y re-emitirlas
         void onPinsUpdated(std::vector<PinLevel> pins);
         void onWorkerError(QString message);
+        void onWorkerStopped();  // Handle worker stop (for single-shot)
 
     private:
         // Helper methods
