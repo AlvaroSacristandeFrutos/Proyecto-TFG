@@ -592,17 +592,35 @@ void MainWindow::onNewProjectWizard()
 
         NewProjectWizard wizard(idcode, this);
         if (wizard.exec() == QDialog::Accepted) {
-            auto packageType = wizard.getPackageType();
 
+            // 1. Obtener configuración del Wizard
+            auto packageType = wizard.getPackageType();
+            double w = wizard.getChipWidth();
+            double h = wizard.getChipHeight();
+
+            // 2. Configurar Visualizador
             if (packageType == PackageTypePage::PackageType::EDGE_PINS) {
                 chipVisualizer->setPackageType("EDGE");
-            } else {
+            }
+            else {
                 chipVisualizer->setPackageType("CENTER");
             }
 
-            updateStatusBar("Project settings updated");
+            // Establecer dimensiones y dibujar placeholder INMEDIATAMENTE
+            chipVisualizer->setCustomDimensions(w, h);
+            chipVisualizer->renderPlaceholder(idcode);
+
+            updateStatusBar("Project settings updated. Waiting for BSDL...");
+
+            // 3. Redirigir AUTOMÁTICAMENTE a cargar BSDL
+            // Usamos un QTimer::singleShot con 0ms para dejar que el UI se refresque
+            // y el wizard se cierre visualmente antes de abrir el explorador de archivos.
+            QTimer::singleShot(100, this, [this]() {
+                onDeviceBSDLFile(); // <--- Redirección automática
+                });
         }
-    } else {
+    }
+    else {
         QMessageBox::information(this, "New Project Wizard",
             "Please detect a device first (Scan > Examine Chain)");
     }

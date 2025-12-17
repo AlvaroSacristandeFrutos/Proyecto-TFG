@@ -53,6 +53,10 @@ public:
     void setLabelRotation(double angle);  // Position label (not rotate text)
     void setPinNumber(const QString& number);
     QString getPinNumber() const { return m_pinNumber; }
+    void setCustomDimensions(double width, double height);
+    void renderPlaceholder(uint32_t idcode); // Dibuja el chip vacío con el ID
+
+
 
 protected:
     void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget) override;
@@ -71,6 +75,8 @@ private:
     bool m_highlighted;
 
     QColor getColorForState(VisualPinState state) const;
+    double m_customWidth = 400.0;
+    double m_customHeight = 400.0;
 };
 
 /**
@@ -98,6 +104,10 @@ public:
     void updatePinState(const QString& pinName, VisualPinState state);
     void highlightPin(const QString& pinName);
     void clearHighlight();
+    void setCustomDimensions(double width, double height);
+    void renderPlaceholder(uint32_t idcode);
+
+    void setChipSize(double width, double height);
 
 signals:
     void pinClicked(const QString& pinName);
@@ -121,6 +131,8 @@ private:
     void createChipLayout();
     void createLQFP100Layout();
     void addPin(const QString& name, int position, PinSide side);
+    double m_chipWidth;
+    double m_chipHeight;
 
     // NUEVO: Helpers para layout real
     ParsedPin parsePinNumber(const QString& pinNumber);

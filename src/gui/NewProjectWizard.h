@@ -6,6 +6,7 @@
 #include <QRadioButton>
 #include <QVBoxLayout>
 #include <QLabel>
+#include <QDoubleSpinBox>
 
 class PackageTypePage : public QWizardPage {
     Q_OBJECT
@@ -19,10 +20,17 @@ public:
     };
 
     PackageType getSelectedType() const;
+    // --- NUEVOS GETTERS ---
+    double getChipWidth() const;
+    double getChipHeight() const;
 
 private:
     QRadioButton* m_edgePinsRadio;
     QRadioButton* m_centerPinsRadio;
+
+    // --- NUEVOS CONTROLES ---
+    QDoubleSpinBox* m_widthSpin;
+    QDoubleSpinBox* m_heightSpin;
 };
 
 class NewProjectWizard : public QWizard {
@@ -32,6 +40,9 @@ public:
     explicit NewProjectWizard(uint32_t idcode, QWidget* parent = nullptr);
 
     PackageTypePage::PackageType getPackageType() const;
+    // --- NUEVOS WRAPPERS ---
+    double getChipWidth() const;
+    double getChipHeight() const;
 
 private:
     PackageTypePage* m_packagePage;
