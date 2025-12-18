@@ -492,11 +492,12 @@ void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model) {
         m_chipBody = m_scene->addRect(-hw, -hh, w, h, QPen(Qt::black, 2), QBrush(Qt::white));
         m_scene->addEllipse(-hw + 8, -hh + 8, 15, 15, QPen(Qt::black, 2), QBrush(Qt::white));
 
-        // Texto IDCODE
+        // Texto IDCODE (encima del chip)
         QFont idFont; idFont.setPointSize(14); idFont.setBold(true);
         QGraphicsTextItem* idItem = m_scene->addText(idCodeText, idFont);
         QRectF r = idItem->boundingRect();
-        idItem->setPos(-r.width() / 2.0, -r.height() / 2.0); // Centrar
+        // Posicionar encima del chip con un margen de 10px
+        idItem->setPos(-r.width() / 2.0, -hh - r.height() - 10);
 
         // --- BUCLE DE COLOCACIÓN (Orden: Top -> Right -> Bottom -> Left) ---
         int pIdx = 0;
@@ -607,6 +608,13 @@ void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model) {
         // Marca de Pin 1 (Círculo negro en esquina superior izquierda)
         m_scene->addEllipse(-hw + 8, -hh + 8, 15, 15, QPen(Qt::black, 2), QBrush(Qt::black));
 
+        // Texto IDCODE (encima del chip) - Modo BGA
+        QFont idFont; idFont.setPointSize(14); idFont.setBold(true);
+        QGraphicsTextItem* idItem = m_scene->addText(idCodeText, idFont);
+        QRectF rBGA = idItem->boundingRect();
+        // Posicionar encima del chip con un margen de 10px
+        idItem->setPos(-rBGA.width() / 2.0, -hh - rBGA.height() - 10);
+
         // 4. Bucle de colocación (Izquierda -> Derecha, Arriba -> Abajo)
         int idx = 0;
         for (const auto& p : pins) {
@@ -713,16 +721,16 @@ void ChipVisualizer::renderPlaceholder(uint32_t idcode) {
     m_scene->addEllipse(-w / 2 + markSize, -h / 2 + markSize, markSize, markSize,
         QPen(Qt::white), QBrush(Qt::white));
 
-    // Mostrar IDCODE en el centro
+    // Mostrar IDCODE encima del chip
     QFont font("Arial", 12, QFont::Bold);
     QString text = QString("IDCODE\n0x%1").arg(idcode, 8, 16, QChar('0')).toUpper();
 
     QGraphicsTextItem* label = m_scene->addText(text, font);
     label->setDefaultTextColor(Qt::white);
 
-    // Centrar texto
+    // Posicionar encima del chip con un margen de 10px
     QRectF textRect = label->boundingRect();
-    label->setPos(-textRect.width() / 2, -textRect.height() / 2);
+    label->setPos(-textRect.width() / 2, -h / 2 - textRect.height() - 10);
 
     // Ajustar vista
     setSceneRect(m_scene->itemsBoundingRect().adjusted(-50, -50, 50, 50));

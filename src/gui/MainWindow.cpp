@@ -831,11 +831,47 @@ void MainWindow::onJTAGConnection()
         JTAG::AdapterDescriptor descriptor = dialog.getSelectedDescriptor();
         uint32_t clockSpeed = dialog.getSelectedClockSpeed();
 
-        // 3. Conectar y detectar dispositivo automáticamente
+        // RESETEAR TODO ANTES DE CONECTAR NUEVA SONDA
+        std::cout << "[MainWindow] Resetting state before connecting new adapter\n";
+
+        // Detener captura si está activa
+        if (isCapturing) {
+            isCapturing = false;
+            ui->actionRun->setText("Run");
+            if (scanController) {
+                scanController->stopPolling();
+            }
+        }
+
+        // Limpiar estado
+        isDeviceDetected = false;
+        isDeviceInitialized = false;
+
+        // Limpiar controles
+        ui->comboBoxDevice->clear();
+        ui->tableWidgetPins->setRowCount(0);
+
+        if (controlPanel) {
+            controlPanel->removeAllPins();
+            ui->dockWatch->setVisible(false);
+        }
+
+        // Resetear visualización del chip
+        if (chipVisualizer) {
+            chipVisualizer->scene()->clear();
+            chipVisualizer->update();
+        }
+
+        // Resetear modo JTAG a SAMPLE
+        if (radioSample) {
+            radioSample->setChecked(true);
+        }
+        currentJTAGMode = JTAGMode::SAMPLE;
+
+        // Conectar nueva sonda
         if (scanController->connectAdapter(descriptor, clockSpeed)) {
             isAdapterConnected = true;
 
-            // Use descriptor info directly (includes serial number)
             QString adapterName = QString::fromStdString(descriptor.name);
             QString serialInfo = QString::fromStdString(descriptor.serialNumber);
 
@@ -846,49 +882,12 @@ void MainWindow::onJTAGConnection()
 
             enableControlsAfterConnection(true);
 
-            // Detectar dispositivo automáticamente
-            QTimer::singleShot(500, this, [this]() {
+            // Detectar dispositivo y abrir wizard automáticamente
+            QTimer::singleShot(300, this, [this]() {
                 uint32_t idcode = scanController->detectDevice();
 
                 if (idcode != 0 && idcode != 0xFFFFFFFF) {
                     isDeviceDetected = true;
-
-                    // Decodificar IDCODE
-                    uint8_t version = (idcode >> 28) & 0xF;
-                    uint16_t partNumber = (idcode >> 12) & 0xFFFF;
-                    uint16_t manufacturer = (idcode >> 1) & 0x7FF;
-
-                    // Crear mensaje
-                    QString message = QString(
-                        "<b style='font-size:14pt;'>Device Detected</b><br><br>"
-                        "<b>IDCODE:</b> 0x%1<br><br>"
-                        "<b>Manufacturer ID:</b> 0x%2<br>"
-                        "<b>Part Number:</b> 0x%3<br>"
-                        "<b>Version:</b> 0x%4"
-                    )
-                    .arg(idcode, 8, 16, QChar('0'))
-                    .arg(manufacturer, 3, 16, QChar('0'))
-                    .arg(partNumber, 4, 16, QChar('0'))
-                    .arg(version, 1, 16);
-
-                    // Crear popup temporal (con botón OK para cerrar manualmente)
-                    QMessageBox* msgBox = new QMessageBox(this);
-                    msgBox->setWindowTitle("JTAG Device Detection");
-                    msgBox->setText(message);
-                    msgBox->setIcon(QMessageBox::Information);
-                    msgBox->setStandardButtons(QMessageBox::Ok);
-                    msgBox->setAttribute(Qt::WA_DeleteOnClose);
-
-                    // Configurar timer para auto-cerrar
-                    QTimer* autoCloseTimer = new QTimer(msgBox);
-                    autoCloseTimer->setSingleShot(true);
-                    connect(autoCloseTimer, &QTimer::timeout, msgBox, &QMessageBox::close);
-                    autoCloseTimer->start(5000);
-
-                    // Si el usuario cierra manualmente, cancelar el timer
-                    connect(msgBox, &QMessageBox::finished, autoCloseTimer, &QTimer::stop);
-
-                    msgBox->show();
 
                     // Actualizar combo
                     ui->comboBoxDevice->clear();
@@ -898,9 +897,15 @@ void MainWindow::onJTAGConnection()
                     updateStatusBar(QString("Device detected - IDCODE: 0x%1")
                         .arg(idcode, 8, 16, QChar('0')));
 
-                    // TODO: Decidir si lanzar New Project Wizard automáticamente
-                    // Actualmente comentado - el usuario debe cargarlo manualmente
-                    // QTimer::singleShot(5500, this, &MainWindow::onNewProjectWizard);
+                    // Abrir New Project Wizard automáticamente
+                    QTimer::singleShot(200, this, &MainWindow::onNewProjectWizard);
+                } else {
+                    QMessageBox::warning(this, "No Device Detected",
+                        "Failed to read IDCODE from device.\n\n"
+                        "Please check:\n"
+                        "- Target device is powered on\n"
+                        "- JTAG connections are correct\n"
+                        "- Target is not held in reset");
                 }
             });
         } else {

@@ -3,13 +3,36 @@
 #include <QGroupBox>
 
 // ========== PackageTypePage ==========
-PackageTypePage::PackageTypePage(QWidget* parent)
-    : QWizardPage(parent)
+PackageTypePage::PackageTypePage(uint32_t idcode, QWidget* parent)
+    : QWizardPage(parent), m_idcode(idcode)
 {
     setTitle("Chip Configuration");
     setSubTitle("Define package type and approximate dimensions.");
 
     QVBoxLayout* layout = new QVBoxLayout(this);
+
+    // 0. IDCODE Display Group
+    QGroupBox* idcodeGroup = new QGroupBox("Detected Device", this);
+    QVBoxLayout* idcodeLayout = new QVBoxLayout(idcodeGroup);
+
+    m_idcodeLabel = new QLabel(this);
+    QString idcodeText = QString(
+        "<b style='font-size:13pt; color:#2196F3;'>IDCODE: 0x%1</b><br>"
+        "<span style='color:gray;'>Manufacturer: 0x%2 | Part: 0x%3 | Version: 0x%4</span>"
+    )
+    .arg(idcode, 8, 16, QChar('0'))
+    .arg((idcode >> 1) & 0x7FF, 3, 16, QChar('0'))
+    .arg((idcode >> 12) & 0xFFFF, 4, 16, QChar('0'))
+    .arg((idcode >> 28) & 0xF, 1, 16);
+
+    m_idcodeLabel->setText(idcodeText);
+    m_idcodeLabel->setTextFormat(Qt::RichText);
+    m_idcodeLabel->setAlignment(Qt::AlignCenter);
+    m_idcodeLabel->setStyleSheet("padding: 10px; background-color: #f5f5f5; border-radius: 5px;");
+
+    idcodeLayout->addWidget(m_idcodeLabel);
+    layout->addWidget(idcodeGroup);
+    layout->addSpacing(15);
 
     // 1. Package Type Group
     QGroupBox* typeGroup = new QGroupBox("Package Type", this);
@@ -67,10 +90,9 @@ NewProjectWizard::NewProjectWizard(uint32_t idcode, QWidget* parent)
     : QWizard(parent), m_idcode(idcode)
 {
     setWindowTitle("New Project Wizard");
-    // ... resto del constructor igual ...
-    m_packagePage = new PackageTypePage(this);
+    m_packagePage = new PackageTypePage(idcode, this);
     addPage(m_packagePage);
-    setButtonText(QWizard::FinishButton, "Next: Load BSDL"); // Cambio de texto sugerido
+    setButtonText(QWizard::FinishButton, "Next: Load BSDL");
 }
 
 PackageTypePage::PackageType NewProjectWizard::getPackageType() const {

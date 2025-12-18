@@ -12,7 +12,7 @@ class PackageTypePage : public QWizardPage {
     Q_OBJECT
 
 public:
-    explicit PackageTypePage(QWidget* parent = nullptr);
+    explicit PackageTypePage(uint32_t idcode, QWidget* parent = nullptr);
 
     enum class PackageType {
         EDGE_PINS,   // TQFP, SOIC, QFP
@@ -31,6 +31,9 @@ private:
     // --- NUEVOS CONTROLES ---
     QDoubleSpinBox* m_widthSpin;
     QDoubleSpinBox* m_heightSpin;
+    QLabel* m_idcodeLabel;
+
+    uint32_t m_idcode;
 };
 
 class NewProjectWizard : public QWizard {
