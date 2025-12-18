@@ -1,3 +1,28 @@
+/**
+ * @file mainwindow.cpp
+ * @brief Implementación de la ventana principal de TopJTAG Probe
+ *
+ * Este archivo contiene la implementación completa de la ventana principal
+ * de la aplicación de Boundary Scan JTAG. Gestiona:
+ *
+ * - Conexión y desconexión de adaptadores JTAG
+ * - Carga de archivos BSDL para configuración de dispositivos
+ * - Visualización y control de pines del Boundary Scan Register (BSR)
+ * - Captura en tiempo real del estado de pines (polling)
+ * - Visualización gráfica del chip con ChipVisualizer
+ * - Panel de control para observar pines (ControlPanelWidget)
+ * - Formas de onda digitales (waveform viewer)
+ * - Modos JTAG: SAMPLE, EXTEST, INTEST, BYPASS
+ * - Wizards: New Project, Chain Examine, Connection Dialog
+ *
+ * Arquitectura:
+ * - UI creada con Qt Designer (mainwindow.ui)
+ * - Backend: ScanController (JTAG core logic)
+ * - Threading: ScanWorker ejecuta polling en thread separado
+ * - Señales/Slots: Comunicación asíncrona thread-safe
+ */
+
+// Qt Headers
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include <QFileDialog>
@@ -22,22 +47,40 @@
 #include <QDialog>
 #include <QListWidget>
 #include <QDialogButtonBox>
+#include <QMetaType>
+
+// Standard Library
 #include <iostream>
 #include <iomanip>
 #include <cmath>
-#include <QMetaType>
 
-// IMPORTANTE: Descomenta estas líneas cuando integres el backend
+// Backend Headers
 #include "../controller/ScanController.h"
-#include "../hal/JtagProtocol.h"  // Para PinLevel enum
+#include "../hal/JtagProtocol.h"
 #include "ConnectionDialog.h"
 #include "ChainExamineDialog.h"
 #include "NewProjectWizard.h"
 
+/**
+ * @brief Constructor de la ventana principal
+ *
+ * Inicializa todos los componentes de la interfaz gráfica y backend:
+ * 1. Carga el diseño UI desde mainwindow.ui
+ * 2. Registra tipos Qt personalizados para señales cross-thread
+ * 3. Inicializa la UI (título, iconos, estado inicial)
+ * 4. Configura vistas gráficas (ChipVisualizer, waveform)
+ * 5. Configura tablas de pines y watch panel
+ * 6. Configura la barra de herramientas personalizada
+ * 7. Crea el ScanController (backend JTAG)
+ * 8. Conecta señales/slots entre UI y backend
+ * 9. Establece estado inicial (controles deshabilitados hasta conectar)
+ *
+ * @param parent Widget padre (nullptr por defecto para ventana independiente)
+ */
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
-    , scanController(nullptr)  // AQUÍ INICIALIZARÁS: std::make_unique<JTAG::ScanController>()
+    , scanController(nullptr)
     , waveformScene(nullptr)
     , timelineScene(nullptr)
     , timelineView(nullptr)
@@ -63,40 +106,52 @@ MainWindow::MainWindow(QWidget *parent)
     , waveformTimebase(1.0)
     , isRedrawing(false)
 {
+    // Cargar diseño UI desde mainwindow.ui
     ui->setupUi(this);
 
+    // Registrar tipos personalizados para señales Qt cross-thread
+    // Necesario para comunicación MainWindow <-> ScanWorker (thread separado)
     qRegisterMetaType<std::vector<JTAG::PinLevel>>("std::vector<JTAG::PinLevel>");
     qRegisterMetaType<JTAG::PinLevel>("JTAG::PinLevel");
 
-    initializeUI();
-    setupGraphicsViews();
-    setupTables();
-    setupToolbar();
+    // Secuencia de inicialización
+    initializeUI();           // Configuración inicial: título, iconos, etc.
+    setupGraphicsViews();     // Chip visualizer, waveform viewer
+    setupTables();            // Tabla de pines principal
+    setupToolbar();           // Barra de herramientas personalizada
 
-    // Crear Control Panel ANTES de setupConnections() para poder conectar la señal
+    // Crear Control Panel ANTES de setupConnections() para conectar señales
     controlPanel = new ControlPanelWidget(this);
 
-    // Reemplazar widget en dockWatch
+    // Reemplazar widget placeholder en dockWatch con control panel real
     QWidget* oldWidget = ui->dockWatch->widget();
     ui->dockWatch->setWidget(controlPanel);
-    delete oldWidget;  // Eliminar tableWidgetWatch
+    delete oldWidget;
 
-    // Hide Watch panel by default
+    // Ocultar Watch panel por defecto (se muestra al agregar pines)
     ui->dockWatch->setVisible(false);
     ui->actionWatch->setChecked(false);
 
-    setupBackend();
-    setupConnections();  // Ahora controlPanel YA existe cuando conectamos
+    setupBackend();           // Crear ScanController (backend JTAG)
+    setupConnections();       // Conectar señales/slots UI <-> Backend
 
     updateWindowTitle();
-    enableControlsAfterConnection(false);
+    enableControlsAfterConnection(false);  // Deshabilitar hasta conectar adaptador
 
-    // Asegurar que el DockWidget Waveform es visible y tiene tamaño razonable
+    // Mostrar Waveform dock por defecto con tamaño razonable
     ui->dockWaveform->setVisible(true);
     ui->dockWaveform->resize(1200, 300);
     ui->actionWaveform->setChecked(true);
 }
 
+/**
+ * @brief Destructor de la ventana principal
+ *
+ * Limpia recursos y detiene operaciones en progreso:
+ * - Detiene el polling de pines si está activo
+ * - Libera escenas gráficas (waveform, timeline)
+ * - Libera interfaz UI
+ */
 MainWindow::~MainWindow()
 {
     // Detener polling si está activo
@@ -108,12 +163,30 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
+/**
+ * @brief Inicializa la interfaz de usuario
+ *
+ * Configura parámetros iniciales de la ventana:
+ * - Tamaño por defecto (1200x800)
+ * - Estado inicial de la barra de estado
+ */
 void MainWindow::initializeUI()
 {
     resize(1200, 800);
     updateStatusBar("Ready");
 }
 
+/**
+ * @brief Configura el backend JTAG (ScanController)
+ *
+ * Crea e inicializa el controlador principal del sistema JTAG:
+ * 1. Crea instancia de ScanController
+ * 2. Conecta señales del ScanController con slots de MainWindow:
+ *    - pinsDataReady: Actualiza UI cuando hay nuevos datos de pines
+ *    - errorOccurred: Muestra errores del backend al usuario
+ *
+ * Nota: El polling se maneja en ScanWorker (thread separado)
+ */
 void MainWindow::setupBackend()
 {
     scanController = std::make_unique<JTAG::ScanController>();
@@ -123,52 +196,30 @@ void MainWindow::setupBackend()
             "Failed to create ScanController");
         return;
     }
-    // ================================================================
 
-    // === CRÍTICO: Conectar señales del ScanController al MainWindow ===
+    // Conectar señales del ScanController al MainWindow para comunicación asíncrona
     connect(scanController.get(), &JTAG::ScanController::pinsDataReady,
             this, &MainWindow::onPinsDataReady);
     connect(scanController.get(), &JTAG::ScanController::errorOccurred,
             this, &MainWindow::onScanError);
-    // ===================================================================
-
-    // DESHABILITADO: Inicialización del catálogo BSDL (causa lentitud al inicio)
-    // El catálogo se cargará bajo demanda cuando se detecte un dispositivo
-    // o cuando el usuario cargue manualmente un BSDL
-    /*
-    // Buscar test_files en varios paths posibles
-    QStringList possiblePaths = {
-        QCoreApplication::applicationDirPath() + "/../../test_files",  // build/Debug
-        QCoreApplication::applicationDirPath() + "/../../../test_files", // out/build/debug
-        "C:/Proyecto/BoundaryScanner/test_files" // Fallback absoluto
-    };
-
-    QString testFilesPath;
-    for (const QString& path : possiblePaths) {
-        QDir dir(path);
-        if (dir.exists()) {
-            testFilesPath = dir.absolutePath();
-            qDebug() << "[MainWindow] Found test_files at:" << testFilesPath;
-            break;
-        }
-    }
-
-    if (testFilesPath.isEmpty()) {
-        qDebug() << "[MainWindow] WARNING: test_files directory not found!";
-        testFilesPath = QCoreApplication::applicationDirPath() + "/../../test_files"; // Usar default
-    }
-
-    scanController->initializeBSDLCatalog(testFilesPath.toStdString());
-    */
-
-    // NOTA: El polling ahora lo maneja ScanWorker en thread separado
-    // El worker emite señales que llegan aquí vía las conexiones de arriba
-    // No se usa QTimer - el worker emite señales automáticamente cada 100ms
 }
 
+/**
+ * @brief Configura las vistas gráficas (chip visualizer y waveform viewer)
+ *
+ * Inicializa los componentes de visualización:
+ * 1. ChipVisualizer: Vista gráfica del chip con representación de pines
+ * 2. Waveform Viewer: Visualizador de formas de onda digitales
+ * 3. Timeline: Línea de tiempo para el waveform
+ *
+ * El waveform viewer consta de tres partes:
+ * - Timeline (arriba): Marcadores de tiempo
+ * - Nombres (izquierda): Nombres de señales observadas
+ * - Waveforms (derecha): Formas de onda propiamente dichas
+ */
 void MainWindow::setupGraphicsViews()
 {
-    // Setup central chip visualizer (replacing standard QGraphicsView)
+    // Crear y configurar ChipVisualizer (reemplaza QGraphicsView placeholder)
     chipVisualizer = new ChipVisualizer(this);
 
     // Replace the graphicsView widget with our ChipVisualizer
@@ -581,48 +632,84 @@ void MainWindow::enableControlsAfterConnection(bool enable)
     btnSetAll0->setEnabled(enable && isDeviceInitialized);
 }
 
-// ============================================================================
-// FILE MENU SLOTS
-// ============================================================================
-
+/**
+ * @brief Abre el asistente de nuevo proyecto (New Project Wizard)
+ *
+ * El wizard guía al usuario en la configuración inicial del proyecto:
+ * 1. Si no hay dispositivo detectado, intenta leer el IDCODE automáticamente
+ * 2. Muestra diálogo del wizard con el IDCODE detectado
+ * 3. Permite configurar:
+ *    - Tipo de package (Edge Pins / Center Pins)
+ *    - Dimensiones visuales del chip
+ * 4. Configura el ChipVisualizer con los parámetros elegidos
+ * 5. Renderiza un placeholder del chip con el IDCODE
+ * 6. Redirige automáticamente a carga de BSDL después de 100ms
+ *
+ * Flujo típico:
+ * - Connect > Scan/JTAG Connection (conecta adaptador)
+ * - File > New Project Wizard (este método)
+ * - [Wizard muestra IDCODE y config visual]
+ * - [Usuario acepta] -> Se abre File Dialog para cargar BSDL
+ *
+ * @note Si no puede leer IDCODE, muestra advertencia y aborta
+ * @note El wizard lee el IDCODE automáticamente si no estaba detectado
+ */
 void MainWindow::onNewProjectWizard()
 {
-    if (isDeviceDetected && scanController) {
-        uint32_t idcode = scanController->getIDCODE();
-
-        NewProjectWizard wizard(idcode, this);
-        if (wizard.exec() == QDialog::Accepted) {
-
-            // 1. Obtener configuración del Wizard
-            auto packageType = wizard.getPackageType();
-            double w = wizard.getChipWidth();
-            double h = wizard.getChipHeight();
-
-            // 2. Configurar Visualizador
-            if (packageType == PackageTypePage::PackageType::EDGE_PINS) {
-                chipVisualizer->setPackageType("EDGE");
-            }
-            else {
-                chipVisualizer->setPackageType("CENTER");
-            }
-
-            // Establecer dimensiones y dibujar placeholder INMEDIATAMENTE
-            chipVisualizer->setCustomDimensions(w, h);
-            chipVisualizer->renderPlaceholder(idcode);
-
-            updateStatusBar("Project settings updated. Waiting for BSDL...");
-
-            // 3. Redirigir AUTOMÁTICAMENTE a cargar BSDL
-            // Usamos un QTimer::singleShot con 0ms para dejar que el UI se refresque
-            // y el wizard se cierre visualmente antes de abrir el explorador de archivos.
-            QTimer::singleShot(100, this, [this]() {
-                onDeviceBSDLFile(); // <--- Redirección automática
-                });
-        }
+    if (!scanController) {
+        QMessageBox::warning(this, "No Controller", "ScanController not initialized");
+        return;
     }
-    else {
-        QMessageBox::information(this, "New Project Wizard",
-            "Please detect a device first (Scan > Examine Chain)");
+
+    // Si no hay dispositivo detectado, intentar leer el IDCODE automáticamente
+    uint32_t idcode = 0;
+    if (!isDeviceDetected) {
+        idcode = scanController->detectDevice();
+        if (idcode != 0) {
+            isDeviceDetected = true;
+            updateStatusBar(QString("Device detected: IDCODE 0x%1").arg(idcode, 8, 16, QChar('0')));
+        } else {
+            QMessageBox::warning(this, "No Device Detected",
+                "Failed to read IDCODE from device.\n\n"
+                "Please check:\n"
+                "- JTAG adapter is connected\n"
+                "- Target device is powered on\n"
+                "- JTAG connections are correct");
+            return;
+        }
+    } else {
+        idcode = scanController->getIDCODE();
+    }
+
+    // Proceder con el wizard
+    NewProjectWizard wizard(idcode, this);
+    if (wizard.exec() == QDialog::Accepted) {
+
+        // 1. Obtener configuración del Wizard
+        auto packageType = wizard.getPackageType();
+        double w = wizard.getChipWidth();
+        double h = wizard.getChipHeight();
+
+        // 2. Configurar Visualizador
+        if (packageType == PackageTypePage::PackageType::EDGE_PINS) {
+            chipVisualizer->setPackageType("EDGE");
+        }
+        else {
+            chipVisualizer->setPackageType("CENTER");
+        }
+
+        // Establecer dimensiones y dibujar placeholder INMEDIATAMENTE
+        chipVisualizer->setCustomDimensions(w, h);
+        chipVisualizer->renderPlaceholder(idcode);
+
+        updateStatusBar("Project settings updated. Waiting for BSDL...");
+
+        // 3. Redirigir AUTOMÁTICAMENTE a cargar BSDL
+        // Usamos un QTimer::singleShot con 0ms para dejar que el UI se refresque
+        // y el wizard se cierre visualmente antes de abrir el explorador de archivos.
+        QTimer::singleShot(100, this, [this]() {
+            onDeviceBSDLFile(); // <--- Redirección automática
+            });
     }
 }
 
@@ -696,10 +783,28 @@ void MainWindow::onInoutPinsDisplaying(bool isIN)
     updateStatusBar(QString("Inout pins displaying: %1").arg(mode));
 }
 
-// ============================================================================
-// SCAN MENU SLOTS
-// ============================================================================
-
+/**
+ * @brief Conecta un adaptador JTAG
+ *
+ * Flujo de conexión:
+ * 1. Detecta adaptadores JTAG disponibles (Mock, J-Link, Pico)
+ * 2. Muestra diálogo de selección si hay múltiples adaptadores
+ * 3. Conecta el adaptador seleccionado
+ * 4. Lee el IDCODE del dispositivo target
+ * 5. Habilita controles de la UI para operaciones JTAG
+ *
+ * Actualiza el estado de la aplicación:
+ * - isAdapterConnected = true
+ * - isDeviceDetected = true si IDCODE válido
+ *
+ * Después de conectar, el usuario puede:
+ * - Cargar archivo BSDL (File > Load BSDL)
+ * - Examinar la cadena JTAG (Scan > Examine Chain)
+ * - Usar el New Project Wizard
+ *
+ * @note Si solo hay un adaptador, se conecta automáticamente
+ * @note Si el IDCODE no es válido (0x00000000 o 0xFFFFFFFF), muestra advertencia
+ */
 void MainWindow::onJTAGConnection()
 {
     if (!scanController) {
@@ -707,7 +812,7 @@ void MainWindow::onJTAGConnection()
         return;
     }
 
-    // 1. Detectar adaptadores disponibles REALMENTE
+    // Detectar adaptadores JTAG disponibles (Mock, J-Link, Pico, etc.)
     auto adapters = scanController->getDetectedAdapters();
 
     if (adapters.empty()) {
@@ -909,26 +1014,29 @@ void MainWindow::onJTAGReset()
     QMessageBox::StandardButton reply = QMessageBox::question(
         this,
         "JTAG Reset",
-        "This will disconnect the adapter and unload the BSDL file.\n\n"
+        "This will unload the BSDL file and clear device data.\n"
+        "The adapter will remain connected.\n\n"
         "Do you want to continue?",
         QMessageBox::Yes | QMessageBox::No
     );
 
     if (reply == QMessageBox::Yes) {
-        // Detener polling si está activo
+        // Llamar al nuevo método que solo descarga el BSDL y limpia el target
+        // pero mantiene la sonda conectada
+        scanController->unloadBSDL();
+
+        // Actualizar estado de la UI
+        // isAdapterConnected - MANTENER true (sonda sigue conectada)
+        // isDeviceDetected - Poner false (el IDCODE del target se ha limpiado)
+        // isDeviceInitialized - Poner false (el BSDL está descargado)
+        isDeviceDetected = false;
+        isDeviceInitialized = false;
+
+        // Actualizar estado del botón Run por si estaba capturando
         if (isCapturing) {
-            scanController->stopPolling();
             isCapturing = false;
             ui->actionRun->setText("Run");
         }
-
-        // Desconectar adapter y descargar BSDL
-        scanController->disconnectAdapter();
-
-        // Actualizar estado de la UI
-        isAdapterConnected = false;
-        isDeviceDetected = false;
-        isDeviceInitialized = false;
 
         // Limpiar controles
         ui->comboBoxDevice->clear();
@@ -945,8 +1053,8 @@ void MainWindow::onJTAGReset()
             chipVisualizer->update();
         }
 
-        // Deshabilitar controles
-        enableControlsAfterConnection(false);
+        // Habilitar solo controles básicos (mantener conexión activa)
+        enableControlsAfterConnection(true);  // CAMBIO: true en lugar de false
 
         // Resetear modo JTAG a SAMPLE
         if (radioSample) {
@@ -954,20 +1062,54 @@ void MainWindow::onJTAGReset()
         }
         currentJTAGMode = JTAGMode::SAMPLE;
 
-        updateStatusBar("JTAG Reset: Adapter disconnected, BSDL unloaded");
+        updateStatusBar("JTAG Reset: BSDL unloaded, adapter still connected");
 
         QMessageBox::information(this, "JTAG Reset Complete",
-            "Adapter disconnected and BSDL unloaded successfully.\n\n"
-            "You can now connect a new adapter or device.");
+            "BSDL unloaded successfully.\n"
+            "Adapter remains connected.\n\n"
+            "You can now load a new BSDL file or examine the chain again.");
     }
 }
 
+/**
+ * @brief Selector de instrucción JTAG (no implementado)
+ *
+ * Placeholder para diálogo futuro de selección manual de instrucciones JTAG.
+ * Actualmente las instrucciones se cambian mediante los botones SAMPLE/EXTEST.
+ */
 void MainWindow::onDeviceInstruction()
 {
-    // Diálogo para seleccionar instrucción (SAMPLE, EXTEST, BYPASS, etc.)
     QMessageBox::information(this, "Device Instruction", "Device Instruction dialog - To be implemented");
 }
 
+/**
+ * @brief Carga un archivo BSDL (Boundary Scan Description Language)
+ *
+ * Flujo de carga de BSDL:
+ * 1. Verifica que haya un adaptador JTAG conectado
+ * 2. Muestra diálogo para seleccionar archivo .bsd/.bsdl
+ * 3. Carga y parsea el archivo BSDL mediante ScanController
+ * 4. Inicializa el dispositivo (configura BSR, entra en modo SAMPLE)
+ * 5. Actualiza la tabla de pines con información del BSDL
+ * 6. Renderiza el chip en ChipVisualizer con layout del BSDL
+ * 7. Inicia el polling automático de pines
+ *
+ * El archivo BSDL contiene:
+ * - IDCODE del dispositivo
+ * - Longitud del Boundary Scan Register (BSR)
+ * - Definición de cada pin (nombre, tipo, celda BSR)
+ * - Instrucciones JTAG soportadas (SAMPLE, EXTEST, etc.)
+ * - Información del package (pinout físico)
+ *
+ * Después de cargar el BSDL exitosamente:
+ * - isDeviceInitialized = true
+ * - Se habilitan controles de pin (Set 0, Set 1, Toggle, etc.)
+ * - Se puede cambiar entre modos SAMPLE y EXTEST
+ * - Se puede observar el estado de pines en tiempo real
+ *
+ * @note Requiere adaptador conectado (isAdapterConnected = true)
+ * @note Soporta rutas con caracteres Unicode en Windows
+ */
 void MainWindow::onDeviceBSDLFile()
 {
     if (!isAdapterConnected) {
@@ -980,7 +1122,14 @@ void MainWindow::onDeviceBSDLFile()
         tr("Open BSDL File"), "", tr("BSDL Files (*.bsd *.bsdl);;All Files (*)"));
 
     if (!fileName.isEmpty() && scanController) {
-        if (scanController->loadBSDL(fileName.toStdString())) {
+        // Convertir QString a std::filesystem::path para soporte Unicode completo
+        #ifdef _WIN32
+            std::filesystem::path bsdlPath(fileName.toStdWString());
+        #else
+            std::filesystem::path bsdlPath(fileName.toStdString());
+        #endif
+
+        if (scanController->loadBSDL(bsdlPath)) {
             updateStatusBar("BSDL loaded: " + fileName);
 
             if (scanController->initializeDevice()) {
@@ -1975,7 +2124,7 @@ void MainWindow::updatePinsTable()
         }
         else {
             // Si level no tiene valor (std::nullopt)
-             // qDebug() << "Pin no value:" << realName;
+            qDebug() << "[MainWindow] Pin no value:" << realName;
         }
     }
     ui->tableWidgetPins->blockSignals(wasBlocked);

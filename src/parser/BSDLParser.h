@@ -6,6 +6,7 @@
 #include <vector>
 #include <map>
 #include <cstdint> // Para uint8_t
+#include <filesystem> // Para std::filesystem::path con soporte Unicode
 
 struct Port {
     std::string name;
@@ -76,7 +77,7 @@ public:
     BSDLParser() = default;
     ~BSDLParser() = default;
 
-    bool parse(const std::string& filename);
+    bool parse(const std::filesystem::path& filename);
     const BSDLData& getData() const { return data; }
 };
 

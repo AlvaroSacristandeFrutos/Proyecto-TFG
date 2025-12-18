@@ -15,11 +15,14 @@ namespace JTAG {
     bool MockAdapter::open() {
         connected = true;
         simulationCounter = 0;
-        std::cout << "[Mock] Simulator Started\n";
+        std::cout << "[MockAdapter] Simulator Started - IDCODE: 0x12345678\n";
         return true;
     }
 
     void MockAdapter::close() {
+        if (connected) {
+            std::cout << "[MockAdapter] Simulator Closed\n";
+        }
         connected = false;
     }
 

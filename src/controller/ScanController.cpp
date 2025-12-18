@@ -18,12 +18,11 @@ namespace JTAG {
         , adapter(nullptr)
         , engine(nullptr)
         , deviceModel(nullptr)
-        , bsdlCatalog(std::make_unique<BSDLCatalog>())
         , detectedIDCODE(0)
         , initialized(false)
     {
         workerThread = new QThread(this);
-        // std::cout << "ScanController created\n";
+        std::cout << "[ScanController] Constructor: ScanController created\n";
     }
 
     ScanController::~ScanController() {
@@ -44,18 +43,30 @@ namespace JTAG {
     // ============================================================================
 
     bool ScanController::connectAdapter(AdapterType type, uint32_t clockSpeed) {
-        if (adapter) disconnectAdapter();
+        std::cout << "[ScanController] connectAdapter: type=" << static_cast<int>(type)
+                  << " clockSpeed=" << clockSpeed << "\n";
+
+        if (adapter) {
+            std::cout << "[ScanController] Disconnecting existing adapter\n";
+            disconnectAdapter();
+        }
 
         try {
             adapter = AdapterFactory::create(type);
 
-            if (!adapter) return false;
+            if (!adapter) {
+                std::cerr << "[ScanController] ERROR: Failed to create adapter\n";
+                return false;
+            }
 
+            std::cout << "[ScanController] Opening adapter...\n";
             if (!adapter->open()) {
+                std::cerr << "[ScanController] ERROR: Failed to open adapter\n";
                 adapter.reset();
                 return false;
             }
 
+            std::cout << "[ScanController] Setting clock speed to " << clockSpeed << " Hz\n";
             adapter->setClockSpeed(clockSpeed);
             initialized = false;
             detectedIDCODE = 0;
@@ -127,6 +138,21 @@ namespace JTAG {
         detectedIDCODE = 0;
     }
 
+    void ScanController::unloadBSDL() {
+        // Detener polling si está activo
+        stopPolling();
+
+        // Limpiar el modelo del dispositivo, engine e IDCODE del target
+        // Mantener SOLO el adaptador (sonda) conectado
+        engine.reset();
+        deviceModel.reset();
+        initialized = false;
+        detectedIDCODE = 0;  // Limpiar IDCODE del target
+
+        // NO tocar: adapter (la sonda sigue conectada)
+        std::cout << "[ScanController] BSDL unloaded - adapter still connected\n";
+    }
+
     bool ScanController::isConnected() const {
         return adapter && adapter->isConnected();
     }
@@ -136,33 +162,51 @@ namespace JTAG {
     }
 
     uint32_t ScanController::detectDevice() {
-        if (!adapter) return 0;
+        std::cout << "[ScanController] detectDevice: Reading IDCODE...\n";
+
+        if (!adapter) {
+            std::cerr << "[ScanController] ERROR: No adapter connected\n";
+            return 0;
+        }
 
         // Engine temporal solo para IDCODE
         auto tempEngine = std::make_unique<BoundaryScanEngine>(adapter.get(), 0);
         detectedIDCODE = tempEngine->readIDCODE();
 
+        std::cout << "[ScanController] IDCODE read: 0x" << std::hex << std::setw(8) << std::setfill('0')
+                  << detectedIDCODE << std::dec << "\n";
+
         if (detectedIDCODE == 0 || detectedIDCODE == 0xFFFFFFFF) {
+            std::cerr << "[ScanController] WARNING: Invalid IDCODE (0x00000000 or 0xFFFFFFFF)\n";
             detectedIDCODE = 0;
             return 0;
         }
         return detectedIDCODE;
     }
 
-    bool ScanController::loadBSDL(const std::string& bsdlPath) {
+    bool ScanController::loadBSDL(const std::filesystem::path& bsdlPath) {
+        std::cout << "[ScanController] loadBSDL: Loading file: " << bsdlPath.string() << "\n";
+
         BSDLParser parser;
         if (!parser.parse(bsdlPath)) {
+            std::cerr << "[ScanController] ERROR: Failed to parse BSDL file\n";
             return false;
         }
 
         deviceModel = std::make_unique<DeviceModel>();
         deviceModel->loadFromData(parser.getData());
 
+        std::cout << "[ScanController] Device: " << deviceModel->getDeviceName()
+                  << " BSR Length: " << deviceModel->getBSRLength() << " bits\n";
+
         // Recrear engine con tamaño BSR correcto
         if (adapter) {
             engine = std::make_unique<BoundaryScanEngine>(adapter.get(), deviceModel->getBSRLength());
+            std::cout << "[ScanController] BoundaryScanEngine recreated with BSR length: "
+                      << deviceModel->getBSRLength() << "\n";
         }
 
+        std::cout << "[ScanController] BSDL loaded successfully\n";
         return true;
     }
 
@@ -179,22 +223,37 @@ namespace JTAG {
     // ============================================================================
 
     bool ScanController::initialize() {
-        if (!adapter || !deviceModel || !engine) return false;
+        std::cout << "[ScanController] initialize: Starting device initialization...\n";
+
+        if (!adapter || !deviceModel || !engine) {
+            std::cerr << "[ScanController] ERROR: Missing components - adapter:" << (adapter ? "OK" : "NULL")
+                      << " deviceModel:" << (deviceModel ? "OK" : "NULL")
+                      << " engine:" << (engine ? "OK" : "NULL") << "\n";
+            return false;
+        }
 
         // Reset TAP a estado conocido
-        if (!engine->reset()) return false;
+        std::cout << "[ScanController] Resetting TAP controller...\n";
+        if (!engine->reset()) {
+            std::cerr << "[ScanController] ERROR: Failed to reset TAP\n";
+            return false;
+        }
 
         // ========== SECUENCIA IEEE 1149.1 (Solución A) ==========
 
         // Paso 1: Cargar instrucción SAMPLE/PRELOAD
+        std::cout << "[ScanController] Loading SAMPLE/PRELOAD instruction...\n";
         uint32_t sampleInstr = deviceModel->getInstruction("SAMPLE/PRELOAD");
         if (sampleInstr == 0xFFFFFFFF) {
             // Fallback si no existe SAMPLE/PRELOAD
+            std::cout << "[ScanController] SAMPLE/PRELOAD not found, trying SAMPLE...\n";
             sampleInstr = deviceModel->getInstruction("SAMPLE");
         }
 
+        std::cout << "[ScanController] SAMPLE instruction opcode: 0x" << std::hex << sampleInstr << std::dec << "\n";
+
         if (!engine->loadInstruction(sampleInstr, deviceModel->getIRLength())) {
-            std::cerr << "[ScanController] Failed to load SAMPLE/PRELOAD instruction\n";
+            std::cerr << "[ScanController] ERROR: Failed to load SAMPLE instruction\n";
             return false;
         }
 
@@ -263,7 +322,7 @@ namespace JTAG {
         // PROTECCIÓN: Si outputCell es negativo, NO INTENTAR ESCRIBIR
         if (pinInfo->outputCell < 0) {
             // Es un input (como CLKIN), ignoramos la escritura silenciosamente o con aviso debug
-            // qDebug() << "Skipping write to input pin:" << QString::fromStdString(pinName);
+            qDebug() << "[ScanController] Skipping write to input pin:" << QString::fromStdString(pinName);
             return false;
         }
 
@@ -472,13 +531,6 @@ namespace JTAG {
 
     bool ScanController::initializeDevice() {
         return initialize();
-    }
-
-    bool ScanController::initializeBSDLCatalog(const std::string& directory) {
-        if (!bsdlCatalog) {
-            bsdlCatalog = std::make_unique<BSDLCatalog>();
-        }
-        return bsdlCatalog->scanDirectory(directory);
     }
 
     std::string ScanController::getPinPort(const std::string& pinName) const {

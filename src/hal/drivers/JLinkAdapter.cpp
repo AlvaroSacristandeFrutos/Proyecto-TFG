@@ -732,7 +732,7 @@ namespace JTAG {
         std::vector<uint8_t>& dataOut) {
         if (!connected) return false;
 
-        // std::cout << "[JLink] scanIR() - irLength: " << (int)irLength << "\n";
+        std::cout << "[JLink] scanIR() - irLength: " << (int)irLength << "\n";
 
         // --- CORRECCIÓN: NAVEGACIÓN SEGURA (SIN RESET) ---
         // En lugar de resetear (que mata el EXTEST), usamos un '0' inicial.
@@ -766,7 +766,7 @@ namespace JTAG {
         std::vector<uint8_t>& dataOut) {
         if (!connected) return false;
 
-        // std::cout << "[JLink] scanDR() - drLength: " << drLength << "\n";
+        std::cout << "[JLink] scanDR() - drLength: " << drLength << "\n";
 
         // 1. Navegar a Shift-DR con "Safety Zero"
         //    Idle(0) -> Select-DR(1) -> Capture-DR(0) -> Shift-DR(0)

@@ -67,7 +67,9 @@ static SafeBit stringToSafeBit(std::string_view s) {
 
 // --- PARSER PRINCIPAL ---
 
-bool BSDLParser::parse(const std::string& filename) {
+bool BSDLParser::parse(const std::filesystem::path& filename) {
+    // std::ifstream en C++17 acepta std::filesystem::path directamente
+    // y maneja Unicode correctamente en todas las plataformas
     std::ifstream in(filename, std::ios::in | std::ios::binary);
     if (!in) return false;
 

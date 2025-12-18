@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <filesystem>
 #include <QObject>
 #include <QThread>
 
@@ -11,7 +12,6 @@
 #include "../bsdl/DeviceModel.h"
 #include "../hal/IJTAGAdapter.h"       // Define AdapterDescriptor
 #include "../hal/factory/AdapterFactory.h"
-#include "../catalog/BSDLCatalog.h"
 #include "ScanWorker.h"
 
 namespace JTAG {
@@ -34,12 +34,13 @@ namespace JTAG {
         bool connectAdapter(AdapterType type, uint32_t clockSpeed = 1000000);
         bool connectAdapter(const AdapterDescriptor& descriptor, uint32_t clockSpeed);
         void disconnectAdapter();
+        void unloadBSDL();  // NUEVO: Descarga solo el BSDL sin desconectar el adaptador
         bool isConnected() const;
         std::string getAdapterInfo() const;
 
         // Gestión de Dispositivo
         uint32_t detectDevice();
-        bool loadBSDL(const std::string& bsdlPath);
+        bool loadBSDL(const std::filesystem::path& bsdlPath);
         std::string getDeviceName() const;
         std::string getPackageInfo() const;
 
@@ -82,9 +83,6 @@ namespace JTAG {
         bool loadDeviceModel(const std::string& path = ""); // path opcional para el stub de prueba
         bool initializeDevice();
 
-        // Catálogo BSDL
-        bool initializeBSDLCatalog(const std::string& directory);
-
         // NUEVO: Exponer DeviceModel para visualización
         const DeviceModel* getDeviceModel() const { return deviceModel.get(); }
 
@@ -117,7 +115,6 @@ namespace JTAG {
         std::unique_ptr<IJTAGAdapter> adapter;
         std::unique_ptr<BoundaryScanEngine> engine;
         std::unique_ptr<DeviceModel> deviceModel;
-        std::unique_ptr<BSDLCatalog> bsdlCatalog;
 
         // Threading
         QThread* workerThread = nullptr;
