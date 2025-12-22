@@ -51,12 +51,15 @@ private slots:
     void onToggleWatch(bool checked);
     void onToggleWaveform(bool checked);
     void onZoom();
-    void onInoutPinsDisplaying(bool isIN);
+    void onSettings();                          // Open settings dialog
+    void onPollingIntervalChanged(int ms);      // Handle polling interval change
+    void onSampleDecimationChanged(int decimation);  // Handle sample decimation change
 
     // Scan menu actions
     void onJTAGConnection();
     void onExamineChain();
     void onRun();
+    void onReset();
     void onJTAGReset();
     void onDeviceInstruction();
     void onDeviceBSDLFile();
@@ -92,8 +95,6 @@ private slots:
     void onWaveformZoomIn();
     void onWaveformZoomOut();
     void onWaveformGoToTime();
-    void onWaveformPreviousEvent();
-    void onWaveformNextEvent();
 
     // Help menu actions
     void onHelpContents();
@@ -114,8 +115,6 @@ private slots:
     void onWaveZoomIn();
     void onWaveZoomOut();
     void onWaveFit();
-    void onWavePrev();
-    void onWaveNext();
     void onWaveGoto();
 
     // NUEVOS slots para recibir datos del worker
@@ -170,9 +169,6 @@ private:
     class QPushButton *btnSetAllZ;
     class QPushButton *btnSetAll0;
 
-    // Action group for IN/OUT of inout radio buttons
-    QActionGroup *inoutActionGroup;
-
     // Current zoom level
     double currentZoom;
     
@@ -180,6 +176,9 @@ private:
     bool isAdapterConnected;
     bool isDeviceDetected;
     bool isDeviceInitialized;
+
+    // Device configuration from wizard
+    QString customDeviceName;
 
     // JTAG Mode state
     enum class JTAGMode { SAMPLE, SAMPLE_SINGLE_SHOT, EXTEST, INTEST, BYPASS };
@@ -189,6 +188,7 @@ private:
     bool isCapturing;
     double waveformTimebase; // in seconds
     bool isRedrawing; // Flag para prevenir redibujado recursivo
+    bool isAutoScrollEnabled; // Flag para controlar auto-scroll en modo captura
 
     // Transition counters for Watch
     std::map<std::string, int> transitionCounters;  // pinName -> count
@@ -202,6 +202,11 @@ private:
     std::map<std::string, std::deque<WaveformSample>> waveformBuffer;
     QElapsedTimer captureTimer;
     const size_t MAX_WAVEFORM_SAMPLES = 10000;  // Circular buffer limit
+
+    // Performance settings
+    int currentPollInterval = 100;      // Polling interval in ms (default: 100ms)
+    int currentSampleDecimation = 1;    // Sample decimation (1 = all samples)
+    int sampleCounter = 0;              // Counter for sample decimation
 
     // Waveform signal tracking (replaces tableWidgetWaveform)
     std::vector<std::string> waveformSignals;  // Lista ordenada de nombres de señales
@@ -227,6 +232,13 @@ private:
 
     // Pin name resolution helper
     QString resolveRealPinName(const QString& displayName) const;
+
+    // Window state persistence (geometry, docks, splitters)
+    void saveWindowState();
+    void loadWindowState();
+
+    // Mode validation helper
+    bool isEditingModeActive();
 };
 
 #endif // MAINWINDOW_H

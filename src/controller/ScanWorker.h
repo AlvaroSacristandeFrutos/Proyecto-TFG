@@ -34,6 +34,9 @@ namespace JTAG {
         // Nuevo: Control de Modo explícito
         void setScanMode(ScanMode mode);
 
+        // Thread-safe: Forzar recarga de instrucción (útil después de JTAG reset)
+        void forceReloadInstruction();
+
         // Thread-safe: GUI puede marcar pines como dirty
         void markDirtyPin(size_t cellIndex, PinLevel level);
 
@@ -61,6 +64,7 @@ namespace JTAG {
 
         std::atomic<bool> running{ false };
         std::atomic<int> pollIntervalMs{ 50 };
+        std::atomic<bool> forceReload{ false }; // Flag para forzar recarga de instrucción
 
         // Estado del modo deseado (Atómico para thread-safety)
         std::atomic<ScanMode> currentMode{ ScanMode::SAMPLE };

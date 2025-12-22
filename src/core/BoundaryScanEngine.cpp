@@ -49,6 +49,21 @@ namespace JTAG {
         return true;
     }
 
+    bool BoundaryScanEngine::resetJTAGStateMachine() {
+        // Emergency reset sequence: 5 TMS=1 to reach Test-Logic-Reset,
+        // then 1 TMS=0 to move to Run-Test/Idle
+        std::vector<bool> tmsSequence = {true, true, true, true, true, false};
+
+        if (!adapter->writeTMS(tmsSequence)) {
+            std::cerr << "BoundaryScanEngine::resetJTAGStateMachine() - Failed to send TMS sequence\n";
+            return false;
+        }
+
+        currentState = TAPState::RUN_TEST_IDLE;
+        std::cout << "BoundaryScanEngine::resetJTAGStateMachine() - JTAG TAP reset to RUN_TEST_IDLE\n";
+        return true;
+    }
+
     TAPState BoundaryScanEngine::getNextState(TAPState current, bool tms) const {
         // Delegamos la lógica a la StateMachine central
         return JtagStateMachine::nextState(current, tms);

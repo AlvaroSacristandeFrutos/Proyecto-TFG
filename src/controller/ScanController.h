@@ -47,6 +47,7 @@ namespace JTAG {
         // Control
         bool initialize();
         bool reset();
+        bool resetJTAGStateMachine();  // Emergency JTAG TAP reset
 
         // Pines
         bool setPin(const std::string& pinName, PinLevel level);
@@ -93,6 +94,7 @@ namespace JTAG {
         void startPolling();
         void stopPolling();
         void setPollInterval(int ms);
+        void forceReloadInstruction();  // Force reload current instruction after JTAG reset
 
         // Thread-safe pin control (marca como dirty sin bloquear)
         void setPinAsync(const std::string& pinName, PinLevel level);

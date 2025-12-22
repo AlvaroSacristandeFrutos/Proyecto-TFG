@@ -29,6 +29,11 @@ namespace JTAG {
         pollIntervalMs = ms;
     }
 
+    void ScanWorker::forceReloadInstruction() {
+        forceReload = true;
+        qDebug() << "[ScanWorker] Force reload instruction requested";
+    }
+
     void ScanWorker::setScanMode(ScanMode mode) {
         currentMode = mode;
 
@@ -38,31 +43,19 @@ namespace JTAG {
             switch (mode) {
                 case ScanMode::SAMPLE:
                     engineMode = BoundaryScanEngine::OperationMode::SAMPLE;
-                    // Si estábamos parados (ej: después de single-shot), reiniciar
-                    if (!running) {
-                        start();
-                    }
                     break;
                 case ScanMode::SAMPLE_SINGLE_SHOT:
                     engineMode = BoundaryScanEngine::OperationMode::SAMPLE;
-                    // Auto-start worker for single-shot capture
+                    // EXCEPCIÓN: Single-shot auto-inicia porque es una operación única
                     if (!running) {
                         start();
                     }
                     break;
                 case ScanMode::EXTEST:
                     engineMode = BoundaryScanEngine::OperationMode::EXTEST;
-                    // Reiniciar si estábamos parados
-                    if (!running) {
-                        start();
-                    }
                     break;
                 case ScanMode::INTEST:
                     engineMode = BoundaryScanEngine::OperationMode::INTEST;
-                    // Reiniciar si estábamos parados
-                    if (!running) {
-                        start();
-                    }
                     break;
                 case ScanMode::BYPASS:
                     engineMode = BoundaryScanEngine::OperationMode::BYPASS;
@@ -102,28 +95,38 @@ namespace JTAG {
 
                 ScanMode targetMode = currentMode.load();
 
-                // 1. CARGA DE INSTRUCCIÓN (Persistente)
-                // Cargamos la instrucción en cada ciclo para asegurar que el chip
-                // no se ha escapado a IDCODE o System Mode por ruido.
-                // Al haber quitado el Reset del adaptador, esto es seguro y no parpadea.
+                // 1. CARGA DE INSTRUCCIÓN (Solo cuando cambia el modo)
+                // Optimización: Solo cargamos instrucción cuando:
+                // - Es la primera ejecución
+                // - El modo cambió (SAMPLE -> EXTEST, etc.)
+                // - Se solicitó recarga forzada (después de JTAG reset)
+                bool forceReloadRequested = forceReload.exchange(false); // Leer y resetear flag
+                bool modeChanged = (targetMode != lastMode) || firstRun || forceReloadRequested;
 
-                std::string instrName = "SAMPLE"; // Default
-                if (targetMode == ScanMode::SAMPLE_SINGLE_SHOT) instrName = "SAMPLE";
-                if (targetMode == ScanMode::EXTEST) instrName = "EXTEST";
-                if (targetMode == ScanMode::INTEST) instrName = "INTEST";
-                if (targetMode == ScanMode::BYPASS) instrName = "BYPASS";
+                if (modeChanged) {
+                    std::string instrName = "SAMPLE"; // Default
+                    if (targetMode == ScanMode::SAMPLE_SINGLE_SHOT) instrName = "SAMPLE";
+                    if (targetMode == ScanMode::EXTEST) instrName = "EXTEST";
+                    if (targetMode == ScanMode::INTEST) instrName = "INTEST";
+                    if (targetMode == ScanMode::BYPASS) instrName = "BYPASS";
 
-                uint32_t opcode = deviceModel->getInstruction(instrName);
+                    uint32_t opcode = deviceModel->getInstruction(instrName);
 
-                // Fallback para SAMPLE
-                if (opcode == 0xFFFFFFFF && targetMode == ScanMode::SAMPLE)
-                    opcode = deviceModel->getInstruction("SAMPLE/PRELOAD");
+                    // Fallback para SAMPLE
+                    if (opcode == 0xFFFFFFFF && targetMode == ScanMode::SAMPLE)
+                        opcode = deviceModel->getInstruction("SAMPLE/PRELOAD");
 
-                size_t irLen = deviceModel->getIRLength();
+                    size_t irLen = deviceModel->getIRLength();
 
-                // Recargamos la instrucción
-                if (!engine->loadInstruction(opcode, irLen)) {
-                    // Error silencioso para no saturar logs
+                    // Cargar la instrucción
+                    if (!engine->loadInstruction(opcode, irLen)) {
+                        qDebug() << "[ScanWorker] Failed to load instruction:" << QString::fromStdString(instrName);
+                    } else {
+                        qDebug() << "[ScanWorker] Loaded instruction:" << QString::fromStdString(instrName);
+                    }
+
+                    lastMode = targetMode;
+                    firstRun = false;
                 }
 
                 // 2. EJECUCIÓN DEL MODO

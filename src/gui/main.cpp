@@ -36,8 +36,8 @@ int main(int argc, char *argv[])
 
     // Configurar metadata de la aplicación
     // Esta información se usa en diálogos "About", configuraciones, etc.
-    app.setApplicationName("TopJTAG Probe");
-    app.setOrganizationName("YourCompany");
+    app.setApplicationName("BoundaryScanner");
+    app.setOrganizationName("UVa");
     app.setApplicationVersion("1.0.0");
 
     // Crear y mostrar la ventana principal

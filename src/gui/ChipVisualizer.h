@@ -55,6 +55,7 @@ public:
     QString getPinNumber() const { return m_pinNumber; }
     void setCustomDimensions(double width, double height);
     void renderPlaceholder(uint32_t idcode); // Dibuja el chip vacío con el ID
+    void setLabelFontSize(int size);
 
 
 
@@ -98,7 +99,7 @@ public:
     void createLayoutFromController(const std::vector<std::string>& pins);
 
     // NUEVO: Renderizar desde DeviceModel con layout real
-    void renderFromDeviceModel(const JTAG::DeviceModel& model);
+    void renderFromDeviceModel(const JTAG::DeviceModel& model, const QString& customDeviceName = QString());
 
     // NEW: Color-coded visualization API
     void updatePinState(const QString& pinName, VisualPinState state);
@@ -137,7 +138,7 @@ private:
     // NUEVO: Helpers para layout real
     ParsedPin parsePinNumber(const QString& pinNumber);
     PinSide determineSide(int row, int col, int maxRow, int maxCol);
-    void addPin(const QString& name, const QString& number, double x, double y, PinSide side, double pinSize = 8.0);
+    void addPin(const QString& name, const QString& number, double x, double y, PinSide side, double pinSize = 8.0, int fontSize = 7, const QString& type = "");
 
     QGraphicsScene* m_scene;
     QGraphicsRectItem* m_chipBody;

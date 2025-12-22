@@ -48,6 +48,7 @@
 #include <QListWidget>
 #include <QDialogButtonBox>
 #include <QMetaType>
+#include <QSettings>
 
 // Standard Library
 #include <iostream>
@@ -60,6 +61,7 @@
 #include "ConnectionDialog.h"
 #include "ChainExamineDialog.h"
 #include "NewProjectWizard.h"
+#include "SettingsDialog.h"
 
 /**
  * @brief Constructor de la ventana principal
@@ -96,7 +98,6 @@ MainWindow::MainWindow(QWidget *parent)
     , btnSetAll1(nullptr)
     , btnSetAllZ(nullptr)
     , btnSetAll0(nullptr)
-    , inoutActionGroup(nullptr)
     , currentZoom(1.0)
     , isAdapterConnected(false)
     , isDeviceDetected(false)
@@ -105,6 +106,7 @@ MainWindow::MainWindow(QWidget *parent)
     , isCapturing(false)
     , waveformTimebase(1.0)
     , isRedrawing(false)
+    , isAutoScrollEnabled(true)
 {
     // Cargar diseño UI desde mainwindow.ui
     ui->setupUi(this);
@@ -142,6 +144,14 @@ MainWindow::MainWindow(QWidget *parent)
     ui->dockWaveform->setVisible(true);
     ui->dockWaveform->resize(1200, 300);
     ui->actionWaveform->setChecked(true);
+
+    // Load saved window state (geometry, docks, column widths)
+    loadWindowState();
+
+    // Load performance settings
+    QSettings settings("TopJTAG", "BoundaryScanner");
+    currentPollInterval = settings.value("performance/pollInterval", 100).toInt();
+    currentSampleDecimation = settings.value("performance/sampleDecimation", 1).toInt();
 }
 
 /**
@@ -154,6 +164,9 @@ MainWindow::MainWindow(QWidget *parent)
  */
 MainWindow::~MainWindow()
 {
+    // Save window state before closing
+    saveWindowState();
+
     // Detener polling si está activo
     if (scanController && isCapturing) {
         scanController->stopPolling();
@@ -268,6 +281,17 @@ void MainWindow::setupGraphicsViews()
     connect(ui->graphicsViewWaveform->horizontalScrollBar(), &QScrollBar::valueChanged,
             [this](int value) {
                 if (!isRedrawing) {  // Solo si no estamos ya en redibujado
+                    QScrollBar* hScrollBar = ui->graphicsViewWaveform->horizontalScrollBar();
+                    int maxScroll = hScrollBar->maximum();
+
+                    // Si está cerca del final (últimos 100px), reactivar auto-scroll
+                    // Si no, deshabilitar para permitir navegación histórica
+                    if (maxScroll - value < 100) {
+                        isAutoScrollEnabled = true;
+                    } else {
+                        isAutoScrollEnabled = false;
+                    }
+
                     timelineView->horizontalScrollBar()->setValue(value);
                     redrawWaveform();  // Actualizar eje temporal con timestamps visibles
                 }
@@ -405,9 +429,22 @@ void MainWindow::setupToolbar()
 {
     // Create zoom combobox for toolbar
     zoomComboBox = new QComboBox(this);
-    zoomComboBox->addItems(QStringList() << "75%" << "100%" << "150%" << "200%");
-    zoomComboBox->setCurrentIndex(1); // Default 100%
-    zoomComboBox->setMinimumWidth(80);
+    QStringList zoomLevels = { "25%", "50%", "75%", "100%", "125%", "150%", "200%", "300%", "400%" };
+    zoomComboBox->addItems(zoomLevels);
+
+    // Buscamos dónde quedó el "100%" para seleccionarlo por defecto
+    int defaultIndex = zoomComboBox->findText("100%");
+    if (defaultIndex != -1) {
+        zoomComboBox->setCurrentIndex(defaultIndex);
+    }
+
+    zoomComboBox->setMinimumWidth(120);
+    zoomComboBox->setMaximumWidth(120);
+
+    // Agrandar fuente para mejor visibilidad
+    QFont zoomFont = zoomComboBox->font();
+    zoomFont.setPointSize(10);
+    zoomComboBox->setFont(zoomFont);
     
     // Replace the zoom action with the combobox
     QWidgetAction *zoomWidgetAction = new QWidgetAction(this);
@@ -423,14 +460,10 @@ void MainWindow::setupToolbar()
         }
     }
     
-    connect(zoomComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &MainWindow::onZoom);
+    connect(zoomComboBox, QOverload<int>::of(&QComboBox::activated),
+            this, [this](int) { onZoom(); });
     
-    // Setup action group for IN/OUT of inout (radio button behavior)
-    inoutActionGroup = new QActionGroup(this);
-    inoutActionGroup->addAction(ui->actionIN_of_inout);
-    inoutActionGroup->addAction(ui->actionOUT_of_inout);
-    ui->actionIN_of_inout->setChecked(true);
+   
 
     // === JTAG MODE SELECTOR ===
     ui->toolBar->addSeparator();
@@ -520,14 +553,14 @@ void MainWindow::setupConnections()
     connect(ui->actionExit, &QAction::triggered, this, &MainWindow::onExit);
     
     // View menu connections
-    connect(ui->actionIN_of_inout, &QAction::triggered, [this]() { onInoutPinsDisplaying(true); });
-    connect(ui->actionOUT_of_inout, &QAction::triggered, [this]() { onInoutPinsDisplaying(false); });
     connect(ui->actionZoom_Menu, &QAction::triggered, this, &MainWindow::onZoom);
-    
+    connect(ui->actionSettings, &QAction::triggered, this, &MainWindow::onSettings);
+
     // Scan menu connections
     connect(ui->actionJTAG_Connection, &QAction::triggered, this, &MainWindow::onJTAGConnection);
     connect(ui->actionExamine_Chain, &QAction::triggered, this, &MainWindow::onExamineChain);
     connect(ui->actionRun, &QAction::triggered, this, &MainWindow::onRun);
+    connect(ui->actionReset, &QAction::triggered, this, &MainWindow::onReset);
     connect(ui->actionJTAG_Reset, &QAction::triggered, this, &MainWindow::onJTAGReset);
     connect(ui->actionDevice_Instruction, &QAction::triggered, this, &MainWindow::onDeviceInstruction);
     connect(ui->actionDevice_BSDL_File, &QAction::triggered, this, &MainWindow::onDeviceBSDLFile);
@@ -563,8 +596,6 @@ void MainWindow::setupConnections()
     connect(ui->actionWaveform_Zoom_In, &QAction::triggered, this, &MainWindow::onWaveformZoomIn);
     connect(ui->actionWaveform_Zoom_Out, &QAction::triggered, this, &MainWindow::onWaveformZoomOut);
     connect(ui->actionWaveform_Go_to_Time, &QAction::triggered, this, &MainWindow::onWaveformGoToTime);
-    connect(ui->actionWaveform_Previous_Event, &QAction::triggered, this, &MainWindow::onWaveformPreviousEvent);
-    connect(ui->actionWaveform_Next_Event, &QAction::triggered, this, &MainWindow::onWaveformNextEvent);
     
     // Help menu connections
     connect(ui->actionHelp_Contents, &QAction::triggered, this, &MainWindow::onHelpContents);
@@ -588,8 +619,6 @@ void MainWindow::setupConnections()
     connect(ui->actionWaveZoomIn, &QAction::triggered, this, &MainWindow::onWaveZoomIn);
     connect(ui->actionWaveZoomOut, &QAction::triggered, this, &MainWindow::onWaveZoomOut);
     connect(ui->actionWaveFit, &QAction::triggered, this, &MainWindow::onWaveFit);
-    connect(ui->actionWavePrev, &QAction::triggered, this, &MainWindow::onWavePrev);
-    connect(ui->actionWaveNext, &QAction::triggered, this, &MainWindow::onWaveNext);
     connect(ui->actionWaveGoto, &QAction::triggered, this, &MainWindow::onWaveGoto);
 
     // Control Panel connection
@@ -687,10 +716,64 @@ void MainWindow::onNewProjectWizard()
 
         // 1. Obtener configuración del Wizard
         auto packageType = wizard.getPackageType();
-        double w = wizard.getChipWidth();
-        double h = wizard.getChipHeight();
+        int horizontalPins = wizard.getHorizontalPins();
+        int verticalPins = wizard.getVerticalPins();
+        customDeviceName = wizard.getDeviceName();
 
-        // 2. Configurar Visualizador
+        qDebug() << "[MainWindow] Wizard config: packageType ="
+                 << (packageType == PackageTypePage::PackageType::EDGE_PINS ? "EDGE_PINS" : "CENTER_PINS")
+                 << ", horizontal =" << horizontalPins
+                 << ", vertical =" << verticalPins;
+
+        // 2. Calcular dimensiones del chip según tipo y proporción de pines
+        double chipWidth, chipHeight;
+
+        if (packageType == PackageTypePage::PackageType::CENTER_PINS) {
+            // BGA/CENTER → Siempre cuadrado
+            chipWidth = 400.0;
+            chipHeight = 400.0;
+        }
+        else {
+            // EDGE_PINS → Calcular según proporción de pines
+
+            // Si ambos son 0 (auto), hacer cuadrado
+            if (horizontalPins == 0 && verticalPins == 0) {
+                chipWidth = 400.0;
+                chipHeight = 400.0;
+            }
+            else {
+                // Calcular proporción
+                double ratio;
+
+                if (horizontalPins == 0 || verticalPins == 0) {
+                    // Solo uno especificado → cuadrado
+                    ratio = 1.0;
+                }
+                else {
+                    ratio = static_cast<double>(horizontalPins) / static_cast<double>(verticalPins);
+                }
+
+                // Si la proporción es extrema (>5 o <0.2), hacer cuadrado
+                if (ratio > 5.0 || ratio < 0.2) {
+                    chipWidth = 400.0;
+                    chipHeight = 400.0;
+                    qDebug() << "[MainWindow] Pin ratio too extreme (" << ratio
+                             << "), using square chip";
+                }
+                else {
+                    // Proporción razonable → aplicarla
+                    chipHeight = 400.0;
+                    chipWidth = chipHeight * ratio;
+                    qDebug() << "[MainWindow] Chip dimensions calculated from pin ratio:"
+                             << chipWidth << "x" << chipHeight
+                             << "(ratio:" << ratio << ")";
+                }
+            }
+        }
+
+        qDebug() << "[MainWindow] Final chip dimensions:" << chipWidth << "x" << chipHeight;
+
+        // 3. Configurar Visualizador
         if (packageType == PackageTypePage::PackageType::EDGE_PINS) {
             chipVisualizer->setPackageType("EDGE");
         }
@@ -699,7 +782,8 @@ void MainWindow::onNewProjectWizard()
         }
 
         // Establecer dimensiones y dibujar placeholder INMEDIATAMENTE
-        chipVisualizer->setCustomDimensions(w, h);
+        chipVisualizer->setCustomDimensions(chipWidth, chipHeight);
+        qDebug() << "[MainWindow] Dimensions set, rendering placeholder...";
         chipVisualizer->renderPlaceholder(idcode);
 
         updateStatusBar("Project settings updated. Waiting for BSDL...");
@@ -769,18 +853,56 @@ void MainWindow::onZoom()
     QString zoomText = zoomComboBox->currentText();
     zoomText.remove('%');
     currentZoom = zoomText.toDouble() / 100.0;
-    
-    ui->graphicsView->resetTransform();
-    ui->graphicsView->scale(currentZoom, currentZoom);
-    
+
+    chipVisualizer->resetTransform();
+    chipVisualizer->scale(currentZoom, currentZoom);
+
     updateStatusBar(QString("Zoom: %1%").arg(zoomText));
 }
 
-void MainWindow::onInoutPinsDisplaying(bool isIN)
+void MainWindow::onSettings()
 {
-    QString mode = isIN ? "IN of inout" : "OUT of inout";
-    ui->labelWaveformStatus->setText(mode);
-    updateStatusBar(QString("Inout pins displaying: %1").arg(mode));
+    SettingsDialog dialog(this);
+    dialog.setPollingInterval(currentPollInterval);
+    dialog.setSampleDecimation(currentSampleDecimation);
+
+    connect(&dialog, &SettingsDialog::pollingIntervalChanged,
+            this, &MainWindow::onPollingIntervalChanged);
+    connect(&dialog, &SettingsDialog::sampleDecimationChanged,
+            this, &MainWindow::onSampleDecimationChanged);
+
+    dialog.exec();
+}
+
+void MainWindow::onPollingIntervalChanged(int ms)
+{
+    currentPollInterval = ms;
+
+    // Apply to scan controller if available
+    if (scanController) {
+        scanController->setPollInterval(ms);
+    }
+
+    // Save to settings
+    QSettings settings("TopJTAG", "BoundaryScanner");
+    settings.setValue("performance/pollInterval", ms);
+
+    updateStatusBar(QString("Polling interval: %1 ms").arg(ms));
+}
+
+void MainWindow::onSampleDecimationChanged(int decimation)
+{
+    currentSampleDecimation = decimation;
+    sampleCounter = 0;  // Reset counter
+
+    // Save to settings
+    QSettings settings("TopJTAG", "BoundaryScanner");
+    settings.setValue("performance/sampleDecimation", decimation);
+
+    QString msg = (decimation == 1)
+        ? "Capturing all samples"
+        : QString("Capturing 1 of every %1 samples").arg(decimation);
+    updateStatusBar(msg);
 }
 
 /**
@@ -1008,7 +1130,7 @@ void MainWindow::onRun()
     }
 }
 
-void MainWindow::onJTAGReset()
+void MainWindow::onReset()
 {
     if (!scanController) {
         QMessageBox::warning(this, "No Controller", "ScanController not initialized");
@@ -1018,7 +1140,7 @@ void MainWindow::onJTAGReset()
     // Confirmar acción
     QMessageBox::StandardButton reply = QMessageBox::question(
         this,
-        "JTAG Reset",
+        "Reset",
         "This will unload the BSDL file and clear device data.\n"
         "The adapter will remain connected.\n\n"
         "Do you want to continue?",
@@ -1026,6 +1148,13 @@ void MainWindow::onJTAGReset()
     );
 
     if (reply == QMessageBox::Yes) {
+        // IMPORTANTE: Detener el worker ANTES de descargar el BSDL
+        if (isCapturing) {
+            scanController->stopPolling();
+            isCapturing = false;
+            ui->actionRun->setText("Run");
+        }
+
         // Llamar al nuevo método que solo descarga el BSDL y limpia el target
         // pero mantiene la sonda conectada
         scanController->unloadBSDL();
@@ -1036,12 +1165,6 @@ void MainWindow::onJTAGReset()
         // isDeviceInitialized - Poner false (el BSDL está descargado)
         isDeviceDetected = false;
         isDeviceInitialized = false;
-
-        // Actualizar estado del botón Run por si estaba capturando
-        if (isCapturing) {
-            isCapturing = false;
-            ui->actionRun->setText("Run");
-        }
 
         // Limpiar controles
         ui->comboBoxDevice->clear();
@@ -1061,18 +1184,73 @@ void MainWindow::onJTAGReset()
         // Habilitar solo controles básicos (mantener conexión activa)
         enableControlsAfterConnection(true);  // CAMBIO: true en lugar de false
 
-        // Resetear modo JTAG a SAMPLE
+        // Resetear modo JTAG a SAMPLE (solo UI, sin disparar el worker)
         if (radioSample) {
+            radioSample->blockSignals(true);
             radioSample->setChecked(true);
+            radioSample->blockSignals(false);
         }
         currentJTAGMode = JTAGMode::SAMPLE;
 
-        updateStatusBar("JTAG Reset: BSDL unloaded, adapter still connected");
+        updateStatusBar("Reset: BSDL unloaded, adapter still connected");
 
-        QMessageBox::information(this, "JTAG Reset Complete",
+        QMessageBox::information(this, "Reset Complete",
             "BSDL unloaded successfully.\n"
             "Adapter remains connected.\n\n"
             "You can now load a new BSDL file or examine the chain again.");
+    }
+}
+
+void MainWindow::onJTAGReset()
+{
+    if (!scanController) {
+        QMessageBox::warning(this, "No Controller", "ScanController not initialized");
+        return;
+    }
+
+    // Confirmar acción
+    QMessageBox::StandardButton reply = QMessageBox::question(
+        this,
+        "JTAG Reset",
+        "This will reset the JTAG state machine by sending:\n"
+        "- 5 TMS=1 clocks (to Test-Logic-Reset)\n"
+        "- 1 TMS=0 clock (to Run-Test/Idle)\n\n"
+        "Use this if the TAP controller is in an unknown state.\n\n"
+        "Do you want to continue?",
+        QMessageBox::Yes | QMessageBox::No
+    );
+
+    if (reply == QMessageBox::Yes) {
+        // 1. Detener worker si está corriendo
+        if (isCapturing) {
+            scanController->stopPolling();
+            isCapturing = false;
+            ui->actionRun->setText("Run");
+            qDebug() << "[MainWindow] Worker stopped for JTAG Reset";
+        }
+
+        // 2. Ejecutar reset JTAG (secuencia TMS: 5×1 + 1×0)
+        // Esto deja el TAP en Run-Test/Idle sin instrucción cargada
+        if (!scanController->resetJTAGStateMachine()) {
+            updateStatusBar("JTAG Reset failed - check adapter connection");
+            qDebug() << "[MainWindow] JTAG Reset FAILED";
+            return;
+        }
+
+        // 3. Desmarcar todos los radio buttons para indicar que no hay modo activo
+        if (jtagModeButtonGroup) {
+            jtagModeButtonGroup->setExclusive(false);
+            if (radioSample) radioSample->setChecked(false);
+            if (radioSampleSingleShot) radioSampleSingleShot->setChecked(false);
+            if (radioExtest) radioExtest->setChecked(false);
+            if (radioIntest) radioIntest->setChecked(false);
+            if (radioBypass) radioBypass->setChecked(false);
+            jtagModeButtonGroup->setExclusive(true);
+        }
+
+        // 4. Estado final: TAP en IDLE, worker parado, sin instrucción cargada
+        updateStatusBar("JTAG TAP reset to RUN_TEST_IDLE - Select mode to continue");
+        qDebug() << "[MainWindow] JTAG Reset complete - TAP in IDLE, no instruction loaded";
     }
 }
 
@@ -1326,6 +1504,8 @@ void MainWindow::onEditPinNamesAndBuses()
 
 void MainWindow::onSetTo0()
 {
+    if (!isEditingModeActive()) return;
+
     QList<QTableWidgetItem*> selectedItems = ui->tableWidgetPins->selectedItems();
     if (selectedItems.isEmpty()) {
         updateStatusBar("No pins selected");
@@ -1352,6 +1532,8 @@ void MainWindow::onSetTo0()
 
 void MainWindow::onSetTo1()
 {
+    if (!isEditingModeActive()) return;
+
     // Similar a onSetTo0() pero con PinLevel::HIGH
     QList<QTableWidgetItem*> selectedItems = ui->tableWidgetPins->selectedItems();
     if (selectedItems.isEmpty()) {
@@ -1513,6 +1695,8 @@ void MainWindow::onSetAllDevicePinsToBSDLSafe()
         return;
     }
 
+    if (!isEditingModeActive()) return;
+
     // Default safe value: HIGH_Z (tristate)
     auto pinNames = scanController->getPinList();
 
@@ -1520,9 +1704,9 @@ void MainWindow::onSetAllDevicePinsToBSDLSafe()
         scanController->setPin(pinName, JTAG::PinLevel::HIGH_Z);
     }
 
-    if (scanController->applyChanges()) {
-        updateStatusBar(QString("Set %1 pins to safe state (HIGH_Z)").arg(pinNames.size()));
-    }
+    scanController->applyChanges();
+    updateStatusBar(QString("Set %1 pins to safe state (HIGH_Z)").arg(pinNames.size()));
+    updatePinsTable();
 }
 
 // ============================================================================
@@ -1818,62 +2002,6 @@ void MainWindow::onWaveformGoToTime()
     }
 }
 
-void MainWindow::onWaveformPreviousEvent()
-{
-    // Find previous transition in any signal
-    double currentViewTime = ui->graphicsViewWaveform->mapToScene(
-        ui->graphicsViewWaveform->viewport()->rect().center()).x() / (100.0 / waveformTimebase);
-
-    double closestTime = -1.0;
-
-    for (const auto& [pinName, samples] : waveformBuffer) {
-        for (size_t i = 1; i < samples.size(); i++) {
-            if (samples[i].level != samples[i-1].level &&
-                samples[i].timestamp < currentViewTime) {
-                if (closestTime < 0 || samples[i].timestamp > closestTime) {
-                    closestTime = samples[i].timestamp;
-                }
-            }
-        }
-    }
-
-    if (closestTime >= 0) {
-        double pixelX = closestTime * (100.0 / waveformTimebase);
-        ui->graphicsViewWaveform->centerOn(pixelX, 0);
-        updateStatusBar(QString("Previous event at %1 s").arg(closestTime));
-    } else {
-        updateStatusBar("No previous event found");
-    }
-}
-
-void MainWindow::onWaveformNextEvent()
-{
-    // Similar to previous but search forward
-    double currentViewTime = ui->graphicsViewWaveform->mapToScene(
-        ui->graphicsViewWaveform->viewport()->rect().center()).x() / (100.0 / waveformTimebase);
-
-    double closestTime = -1.0;
-
-    for (const auto& [pinName, samples] : waveformBuffer) {
-        for (size_t i = 1; i < samples.size(); i++) {
-            if (samples[i].level != samples[i-1].level &&
-                samples[i].timestamp > currentViewTime) {
-                if (closestTime < 0 || samples[i].timestamp < closestTime) {
-                    closestTime = samples[i].timestamp;
-                }
-            }
-        }
-    }
-
-    if (closestTime >= 0) {
-        double pixelX = closestTime * (100.0 / waveformTimebase);
-        ui->graphicsViewWaveform->centerOn(pixelX, 0);
-        updateStatusBar(QString("Next event at %1 s").arg(closestTime));
-    } else {
-        updateStatusBar("No next event found");
-    }
-}
-
 // ============================================================================
 // HELP MENU SLOTS
 // ============================================================================
@@ -1994,16 +2122,6 @@ void MainWindow::onWaveFit()
     redrawWaveform();
 }
 
-void MainWindow::onWavePrev()
-{
-    onWaveformPreviousEvent();  // Delegar al método del menú
-}
-
-void MainWindow::onWaveNext()
-{
-    onWaveformNextEvent();  // Delegar al método del menú
-}
-
 void MainWindow::onWaveGoto()
 {
     onWaveformGoToTime();
@@ -2070,39 +2188,60 @@ void MainWindow::updatePinsTable()
         QString realName = resolveRealPinName(displayName);
         std::string pinName = realName.toStdString(); // <--- Aquí definimos pinName
 
-        // 2. Leer estado del pin
+        // 2. Obtener tipo de pin (para detectar linkage)
+        QString type = QString::fromStdString(scanController->getPinType(pinName));
+
+        // 3. Leer estado del pin
         auto level = scanController->getPin(pinName);
 
         if (level.has_value()) {
             QString valueStr;
-            VisualPinState visualState; // <--- Aquí definimos visualState
+            VisualPinState visualState;
 
-            switch (level.value()) {
-            case JTAG::PinLevel::LOW:
-                valueStr = "0";
-                visualState = VisualPinState::LOW;
-                break;
-            case JTAG::PinLevel::HIGH:
-                valueStr = "1";
-                visualState = VisualPinState::HIGH;
-                break;
-            case JTAG::PinLevel::HIGH_Z:
-                valueStr = "Z";
-                visualState = VisualPinState::UNKNOWN;
-                break;
+            // Verificar si es un pin LINKAGE (no controlable)
+            if (type.toLower() == "linkage") {
+                valueStr = "-";
+                visualState = VisualPinState::LINKAGE;
+            }
+            else {
+                // Pin normal - asignar según nivel
+                switch (level.value()) {
+                case JTAG::PinLevel::LOW:
+                    valueStr = "0";
+                    visualState = VisualPinState::LOW;
+                    break;
+                case JTAG::PinLevel::HIGH:
+                    valueStr = "1";
+                    visualState = VisualPinState::HIGH;
+                    break;
+                case JTAG::PinLevel::HIGH_Z:
+                    valueStr = "Z";
+                    // HIGH_Z es un estado válido - usar amarillo (OSCILLATING)
+                    visualState = VisualPinState::OSCILLATING;
+                    break;
+                }
             }
 
-            // 3. Actualizar la celda de VALOR (Columna 3)
+            // 4. Actualizar la celda de VALOR (Columna 3)
             QTableWidgetItem* valueItem = ui->tableWidgetPins->item(row, 3);
             if (valueItem) {
                 valueItem->setText(valueStr);
 
                 // --- Lógica de Edición (EXTEST) ---
-                QString type = QString::fromStdString(scanController->getPinType(pinName));
-
                 // Permitir editar si es EXTEST y es una salida (incluyendo output2 del hack)
+                // NOTA: Los pines LINKAGE nunca son editables
+                QString typeLower = type.toLower();
                 bool isEditable = (currentJTAGMode == JTAGMode::EXTEST) &&
-                    (type == "OUTPUT" || type == "INOUT" || type == "output2");
+                    (typeLower == "output" || typeLower == "inout" || typeLower == "output2") &&
+                    (typeLower != "linkage");
+
+                // DEBUG: Mostrar primeros 5 pines para verificar tipos
+                if (row < 5) {
+                    qDebug() << "[updatePinsTable] Pin" << realName
+                             << "type:" << type
+                             << "mode:" << (currentJTAGMode == JTAGMode::EXTEST ? "EXTEST" : "OTHER")
+                             << "editable:" << isEditable;
+                }
 
                 if (isEditable) {
                     valueItem->setFlags(valueItem->flags() | Qt::ItemIsEditable);
@@ -2114,7 +2253,7 @@ void MainWindow::updatePinsTable()
                 }
             }
 
-            // 4. Actualizar visualizador del chip
+            // 5. Actualizar visualizador del chip
             if (chipVisualizer) {
                 chipVisualizer->updatePinState(realName, visualState);
             }
@@ -2128,8 +2267,35 @@ void MainWindow::updatePinsTable()
             */
         }
         else {
-            // Si level no tiene valor (std::nullopt)
-            qDebug() << "[MainWindow] Pin no value:" << realName;
+            // Pin no tiene valor - Verificar si es LINKAGE o simplemente no accesible
+            QString type = QString::fromStdString(scanController->getPinType(realName.toStdString()));
+
+            QTableWidgetItem* valueItem = ui->tableWidgetPins->item(row, 3);
+            if (valueItem) {
+                if (type.toLower() == "linkage") {
+                    // Pin LINKAGE (VCC, GND, NC) - no controlable vía JTAG
+                    valueItem->setText("-");
+                    valueItem->setFlags(valueItem->flags() & ~Qt::ItemIsEditable);
+                    valueItem->setBackground(Qt::darkGray);
+
+                    // Mantener estado LINKAGE (negro) en visualizador
+                    if (chipVisualizer) {
+                        chipVisualizer->updatePinState(realName, VisualPinState::LINKAGE);
+                    }
+                } else {
+                    // Pin normal sin valor (no accesible)
+                    valueItem->setText("?");
+                    valueItem->setFlags(valueItem->flags() & ~Qt::ItemIsEditable);
+                    valueItem->setBackground(Qt::lightGray);
+
+                    // Actualizar visualizador como UNKNOWN (gris)
+                    if (chipVisualizer) {
+                        chipVisualizer->updatePinState(realName, VisualPinState::UNKNOWN);
+                    }
+
+                    qDebug() << "[MainWindow] Pin not sampled:" << realName;
+                }
+            }
         }
     }
     ui->tableWidgetPins->blockSignals(wasBlocked);
@@ -2164,8 +2330,8 @@ void MainWindow::renderChipVisualization()
         return;
     }
 
-    // Render the chip visualization using the device model
-    chipVisualizer->renderFromDeviceModel(*deviceModel);
+    // Render the chip visualization using the device model with custom name
+    chipVisualizer->renderFromDeviceModel(*deviceModel, customDeviceName);
 }
 
 void MainWindow::updateControlPanel(const std::vector<JTAG::PinLevel>& pinLevels)
@@ -2455,23 +2621,28 @@ void MainWindow::redrawWaveform()
         }
 
         // BUG FIX 3: CULLING - Solo dibujar muestras en el rango visible
-        // Buscar índice de inicio (primera muestra visible)
-        size_t startIdx = 0;
-        for (size_t i = 0; i < samples.size(); i++) {
-            if (samples[i].timestamp >= visibleStartTime - 1.0) {  // -1s margen
-                startIdx = (i > 0) ? i - 1 : 0;  // Incluir muestra anterior para continuidad
-                break;
-            }
-        }
+        // Usar búsqueda binaria para encontrar el rango visible (O(log n) vs O(n))
+        double searchStartTime = visibleStartTime - 1.0;  // -1s margen
+        double searchEndTime = visibleEndTime + 1.0;      // +1s margen
 
-        // Buscar índice de fin (última muestra visible)
-        size_t endIdx = samples.size();
-        for (size_t i = startIdx; i < samples.size(); i++) {
-            if (samples[i].timestamp > visibleEndTime + 1.0) {  // +1s margen
-                endIdx = std::min(i + 1, samples.size());  // Incluir muestra siguiente
-                break;
-            }
-        }
+        // Buscar índice de inicio con lower_bound
+        auto startIt = std::lower_bound(samples.begin(), samples.end(), searchStartTime,
+            [](const WaveformSample& sample, double time) {
+                return sample.timestamp < time;
+            });
+        size_t startIdx = (startIt != samples.begin())
+            ? std::distance(samples.begin(), startIt - 1)  // Incluir muestra anterior
+            : 0;
+
+        // Buscar índice de fin con upper_bound
+        auto endIt = std::upper_bound(samples.begin(), samples.end(), searchEndTime,
+            [](double time, const WaveformSample& sample) {
+                return time < sample.timestamp;
+            });
+        size_t endIdx = std::min(
+            static_cast<size_t>(std::distance(samples.begin(), endIt)) + 1,
+            samples.size()
+        );
 
         // Calcular decimación si hay demasiadas muestras visibles
         size_t visibleCount = endIdx - startIdx;
@@ -2514,8 +2685,22 @@ void MainWindow::redrawWaveform()
     waveformNamesScene->setSceneRect(0, 0, 150, maxY);
     timelineScene->setSceneRect(0, 0, maxX, 50);
 
-    // BUG FIX 4: NO hacer auto-scroll automático - interfiere con zoom/scroll manual
-    // El usuario puede navegar manualmente o usar botones de navegación
+    // Auto-scroll: Seguir el tiempo actual solo cuando está capturando Y auto-scroll habilitado
+    if (isCapturing && isAutoScrollEnabled && maxTime > 0) {
+        // Calcular posición X del tiempo más reciente
+        int targetX = static_cast<int>(maxTime * PIXELS_PER_SECOND);
+
+        // Centrar el viewport en el tiempo actual (con margen del 80% del ancho)
+        int viewportWidth = ui->graphicsViewWaveform->viewport()->width();
+        int scrollPos = targetX - static_cast<int>(viewportWidth * 0.8);
+
+        // Asegurar que no hacemos scroll a valores negativos
+        if (scrollPos < 0) scrollPos = 0;
+
+        // Aplicar scroll a las tres vistas sincronizadas
+        ui->graphicsViewWaveform->horizontalScrollBar()->setValue(scrollPos);
+        timelineView->horizontalScrollBar()->setValue(scrollPos);
+    }
 
     isRedrawing = false;
 }
@@ -2576,6 +2761,16 @@ void MainWindow::onPinsDataReady(std::vector<JTAG::PinLevel> pins)
     if (!scanController || !isCapturing) {
         qDebug() << "[MainWindow::onPinsDataReady] SKIPPED - not capturing";
         return;
+    }
+
+    // Sample decimation: Only apply in continuous SAMPLE mode
+    // SAMPLE 1x (single shot) always updates regardless of decimation
+    if (currentJTAGMode == JTAGMode::SAMPLE) {
+        sampleCounter++;
+        if (sampleCounter < currentSampleDecimation) {
+            return;  // Skip this sample update
+        }
+        sampleCounter = 0;  // Reset for next cycle
     }
 
     // 1. Actualizar tabla de pines
@@ -2650,13 +2845,29 @@ void MainWindow::onJTAGModeChanged(int modeId)
     default: return;
     }
 
-    scanController->setScanMode(targetMode);
-
+    // CRÍTICO: Actualizar currentJTAGMode ANTES de setScanMode
+    // Esto asegura que updatePinsTable() vea el modo correcto
     currentJTAGMode = (modeId == 0) ? JTAGMode::SAMPLE :
                       (modeId == 1) ? JTAGMode::SAMPLE_SINGLE_SHOT :
                       (modeId == 2) ? JTAGMode::EXTEST :
                       (modeId == 3) ? JTAGMode::INTEST :
                       JTAGMode::BYPASS;
+
+    scanController->setScanMode(targetMode);
+
+    // LOG: Imprimir modo actual por consola
+    qDebug() << "[MainWindow] JTAG Mode changed to:" << modeName;
+
+    // Sincronizar isCapturing con el auto-inicio del worker
+    // Si el modo requiere polling (todos menos BYPASS) y tenemos dispositivo inicializado,
+    // el worker se auto-inició, así que marcar como capturing
+    if (currentJTAGMode != JTAGMode::BYPASS && isDeviceInitialized) {
+        if (!isCapturing) {
+            isCapturing = true;
+            ui->actionRun->setText("Stop");
+            qDebug() << "[MainWindow] Worker auto-started, isCapturing set to true";
+        }
+    }
 
     // Controlar visibilidad del Control Panel
     if (controlPanel) {
@@ -2670,14 +2881,43 @@ void MainWindow::onJTAGModeChanged(int modeId)
             auto pinList = scanController->getPinList();
             for (const auto& pinName : pinList) {
                 std::string type = scanController->getPinType(pinName);
-                // Solo añadir pines editables (OUTPUT y INOUT)
-                if (type == "OUTPUT" || type == "INOUT" || type == "output2" || type == "inout2") {
+                // Solo añadir pines editables (OUTPUT y INOUT) - normalizar a lowercase
+                std::string typeLower = type;
+                std::transform(typeLower.begin(), typeLower.end(), typeLower.begin(), ::tolower);
+                if (typeLower == "output" || typeLower == "inout" || typeLower == "output2" || typeLower == "inout2") {
                     std::string pinNumber = scanController->getPinNumber(pinName);
                     controlPanel->addPin(pinName, pinNumber);
+
+                    // Obtener valor actual del pin desde la tabla de pines
+                    QString qPinName = QString::fromStdString(pinName);
+                    for (int row = 0; row < ui->tableWidgetPins->rowCount(); ++row) {
+                        QTableWidgetItem* nameItem = ui->tableWidgetPins->item(row, 0);
+                        if (nameItem && resolveRealPinName(nameItem->text()) == qPinName) {
+                            // Encontrado - leer el valor de la columna 3 (I/O Value)
+                            QTableWidgetItem* valueItem = ui->tableWidgetPins->item(row, 3);
+                            if (valueItem) {
+                                QString valueText = valueItem->text();
+                                JTAG::PinLevel currentLevel;
+
+                                // Convertir texto a PinLevel
+                                if (valueText == "1") {
+                                    currentLevel = JTAG::PinLevel::HIGH;
+                                } else if (valueText == "0") {
+                                    currentLevel = JTAG::PinLevel::LOW;
+                                } else {
+                                    currentLevel = JTAG::PinLevel::HIGH_Z;
+                                }
+
+                                // Actualizar el Control Panel con el valor actual
+                                controlPanel->updatePinValue(pinName, currentLevel);
+                            }
+                            break;
+                        }
+                    }
                 }
             }
 
-            updateStatusBar(QString("Mode changed to %1 - Control Panel populated with editable pins").arg(modeName));
+            updateStatusBar(QString("Mode changed to %1 - Control Panel populated with current pin values").arg(modeName));
         } else {
             updateStatusBar(QString("Mode changed to %1").arg(modeName));
         }
@@ -2699,6 +2939,7 @@ void MainWindow::onSetAllToSafeState()
 void MainWindow::onSetAllTo1()
 {
     if (!scanController) return;
+    if (!isEditingModeActive()) return;
 
     // Get all output pins and set them to HIGH
     auto pinList = scanController->getPinList();
@@ -2721,6 +2962,7 @@ void MainWindow::onSetAllTo1()
 void MainWindow::onSetAllToZ()
 {
     if (!scanController) return;
+    if (!isEditingModeActive()) return;
 
     // Get all output pins and set them to HIGH_Z
     auto pinList = scanController->getPinList();
@@ -2743,6 +2985,7 @@ void MainWindow::onSetAllToZ()
 void MainWindow::onSetAllTo0()
 {
     if (!scanController) return;
+    if (!isEditingModeActive()) return;
 
     // Get all output pins and set them to LOW
     auto pinList = scanController->getPinList();
@@ -2785,4 +3028,113 @@ void MainWindow::onControlPanelPinChanged(QString pinName, JTAG::PinLevel level)
     updateStatusBar(QString("Pin %1 set to %2")
         .arg(pinName)
         .arg(levelStr));
+}
+
+// ============================================================================
+// Mode Validation Helper
+// ============================================================================
+
+/**
+ * @brief Checks if we are in a mode that allows pin editing
+ *
+ * Pin editing (setting pin values) is only allowed in EXTEST and INTEST modes.
+ * In SAMPLE mode, pins are read-only.
+ *
+ * @return true if editing is allowed (EXTEST/INTEST), false otherwise
+ */
+bool MainWindow::isEditingModeActive()
+{
+    if (currentJTAGMode != JTAGMode::EXTEST && currentJTAGMode != JTAGMode::INTEST) {
+        QMessageBox::warning(this, "Mode Error",
+            "Pin editing is only available in EXTEST or INTEST mode.\n"
+            "Current mode: SAMPLE (read-only)");
+        return false;
+    }
+    return true;
+}
+
+// ============================================================================
+// Window State Persistence
+// ============================================================================
+
+/**
+ * @brief Saves the current window state to persistent storage
+ *
+ * Saves:
+ * - Window geometry (size and position)
+ * - Dock widgets state (visible, floating, position)
+ * - Main window state (toolbars, splitters)
+ * - Table column widths
+ *
+ * Uses QSettings with INI format
+ * Settings are stored in "layout.ini" file in the working directory
+ * (typically the same folder as the executable)
+ */
+void MainWindow::saveWindowState()
+{
+    QSettings settings("layout.ini", QSettings::IniFormat);
+
+    // Save window geometry and state
+    settings.setValue("MainWindow/geometry", saveGeometry());
+    settings.setValue("MainWindow/windowState", saveState());
+
+    // Save table column widths
+    if (ui->tableWidgetPins->columnCount() > 0) {
+        QList<int> columnWidths;
+        for (int i = 0; i < ui->tableWidgetPins->columnCount(); ++i) {
+            columnWidths.append(ui->tableWidgetPins->columnWidth(i));
+        }
+        settings.setValue("PinsTable/columnWidths", QVariant::fromValue(columnWidths));
+    }
+
+    // Save splitter states if any
+    // Add more settings as needed
+
+    settings.sync();
+    qDebug() << "[MainWindow] Window state saved to:" << settings.fileName();
+}
+
+/**
+ * @brief Loads the saved window state from persistent storage
+ *
+ * Restores:
+ * - Window geometry (size and position)
+ * - Dock widgets state (visible, floating, position)
+ * - Main window state (toolbars, splitters)
+ * - Table column widths
+ *
+ * Should be called after UI is fully initialized but before showing the window
+ */
+void MainWindow::loadWindowState()
+{
+    QSettings settings("layout.ini", QSettings::IniFormat);
+
+    qDebug() << "[MainWindow] Loading window state from:" << settings.fileName();
+
+    // Restore window geometry and state
+    QByteArray geometry = settings.value("MainWindow/geometry").toByteArray();
+    if (!geometry.isEmpty()) {
+        restoreGeometry(geometry);
+        qDebug() << "[MainWindow] Window geometry restored";
+    } else {
+        qDebug() << "[MainWindow] No saved geometry found, using defaults";
+    }
+
+    QByteArray windowState = settings.value("MainWindow/windowState").toByteArray();
+    if (!windowState.isEmpty()) {
+        restoreState(windowState);
+        qDebug() << "[MainWindow] Window state (docks, toolbars) restored";
+    }
+
+    // Restore table column widths
+    QList<int> columnWidths = settings.value("PinsTable/columnWidths").value<QList<int>>();
+    if (!columnWidths.isEmpty() && ui->tableWidgetPins->columnCount() == columnWidths.size()) {
+        for (int i = 0; i < columnWidths.size(); ++i) {
+            ui->tableWidgetPins->setColumnWidth(i, columnWidths[i]);
+        }
+        qDebug() << "[MainWindow] Table column widths restored";
+    }
+
+    // Restore splitter states if any
+    // Add more settings as needed
 }

@@ -34,8 +34,11 @@ PinGraphicsItem::PinGraphicsItem(const QString& pinNumber, QGraphicsItem* parent
     setAcceptHoverEvents(true);
     setFlag(QGraphicsItem::ItemIsSelectable, false);  // Selection via table
 
-    // Ocultar label - ahora usaremos una leyenda externa
-    m_label->setVisible(false);
+    // Mostrar label con el número de pin
+    m_label->setVisible(true);
+    m_label->setDefaultTextColor(Qt::black);
+    QFont labelFont("Arial", 7);
+    m_label->setFont(labelFont);
 }
 
 void PinGraphicsItem::setPinState(bool level, bool enabled) {
@@ -49,21 +52,22 @@ void PinGraphicsItem::setLabelRotation(double angle) {
     // angle indica el lado: 0=TOP, 90=LEFT, 180=BOTTOM, -90=RIGHT
 
     QRectF r = m_label->boundingRect();
+    QRectF pinRect = rect();  // Obtener el rectángulo del pin
     m_label->setRotation(0);  // SIEMPRE horizontal
 
-    // Posicionar según el lado
+    // Posicionar según el lado, centrado respecto al pin
     if (angle == 90) {
         // LEFT: label a la IZQUIERDA del pin
-        m_label->setPos(-r.width() - 2, -r.height() / 2);
+        m_label->setPos(-r.width() - 3, (pinRect.height() - r.height()) / 2);
     } else if (angle == -90 || angle == 270) {
         // RIGHT: label a la DERECHA del pin
-        m_label->setPos(10, -r.height() / 2);  // 10px = 8px pin + 2px gap
+        m_label->setPos(pinRect.width() + 3, (pinRect.height() - r.height()) / 2);
     } else if (angle == 180) {
-        // BOTTOM: label DEBAJO del pin
-        m_label->setPos(-r.width() / 2, 10);
+        // BOTTOM: label DEBAJO del pin (centrado horizontalmente)
+        m_label->setPos((pinRect.width() - r.width()) / 2, pinRect.height() + 2);
     } else {
-        // TOP (0): label ARRIBA del pin
-        m_label->setPos(-r.width() / 2, -r.height() - 2);
+        // TOP (0): label ARRIBA del pin (centrado horizontalmente)
+        m_label->setPos((pinRect.width() - r.width()) / 2, -r.height() - 2);
     }
 }
 
@@ -86,6 +90,12 @@ void PinGraphicsItem::setState(VisualPinState state) {
 void PinGraphicsItem::setHighlighted(bool highlighted) {
     m_highlighted = highlighted;
     update();  // Trigger repaint
+}
+
+void PinGraphicsItem::setLabelFontSize(int size) {
+    QFont font = m_label->font();
+    font.setPointSize(size);
+    m_label->setFont(font);
 }
 
 QColor PinGraphicsItem::getColorForState(VisualPinState state) const {
@@ -184,6 +194,7 @@ void ChipVisualizer::setChipSize(double width, double height) {
 
     m_chipWidth = width;
     m_chipHeight = height;
+    qDebug() << "[ChipVisualizer] setChipSize:" << m_chipWidth << "x" << m_chipHeight;
 }
 
 ChipVisualizer::~ChipVisualizer() {
@@ -368,7 +379,7 @@ ChipVisualizer::PinSide ChipVisualizer::determineSide(int row, int col, int maxR
     return RIGHT;
 }
 
-void ChipVisualizer::addPin(const QString& name, const QString& number, double x, double y, PinSide side, double pinSize) {
+void ChipVisualizer::addPin(const QString& name, const QString& number, double x, double y, PinSide side, double pinSize, int fontSize, const QString& type) {
     // Crear pin gráfico con NÚMERO visible (no nombre)
     PinGraphicsItem* pin = new PinGraphicsItem(number);  // ← NÚMERO aquí
     pin->setRect(0, 0, pinSize, pinSize);  // Tamaño adaptativo
@@ -377,8 +388,15 @@ void ChipVisualizer::addPin(const QString& name, const QString& number, double x
     // Set logical name (for lookups)
     pin->setPinName(name);
 
-    // Estado inicial: UNKNOWN (gris)
-    pin->setState(VisualPinState::UNKNOWN);
+    // Establecer tamaño de fuente del label
+    pin->setLabelFontSize(fontSize);
+
+    // Estado inicial: verificar si es LINKAGE
+    if (type.toLower() == "linkage") {
+        pin->setState(VisualPinState::LINKAGE);
+    } else {
+        pin->setState(VisualPinState::UNKNOWN);
+    }
 
     // Posicionar label según el lado (SIEMPRE horizontal, solo cambia posición)
     switch (side) {
@@ -403,7 +421,7 @@ void ChipVisualizer::addPin(const QString& name, const QString& number, double x
     m_pins[name] = pin;  // Key por NOMBRE (para buscar desde tabla)
 }
 
-void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model) {
+void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model, const QString& customDeviceName) {
     // 1. Limpieza obligatoria de la escena (Qt)
     m_scene->clear();
     m_pins.clear();
@@ -450,10 +468,20 @@ void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model) {
     // PREPARACIÓN DE DATOS
     // -----------------------------------------------------------------------
 
-    // IDCODE: Formato C estándar para evitar dependencias de Qt aquí
-    uint32_t actualIdCode = 0x12345678; // TODO: Usar model.idCode si está disponible
+    // Obtener datos del modelo
+    uint32_t actualIdCode = model.getIDCODE();
+
+    // Usar nombre personalizado si se proporciona, sino usar el del BSDL
+    QString deviceName;
+    if (!customDeviceName.isEmpty()) {
+        deviceName = customDeviceName;
+    } else {
+        deviceName = QString::fromStdString(model.getDeviceName());
+    }
+
+    // Formatear texto para mostrar
     char idBuffer[64];
-    std::snprintf(idBuffer, sizeof(idBuffer), "IDCODE: 0x%08X", actualIdCode);
+    std::snprintf(idBuffer, sizeof(idBuffer), "0x%08X", actualIdCode);
     QString idCodeText = QString::fromLatin1(idBuffer);
 
     int totalPins = static_cast<int>(pins.size());
@@ -463,6 +491,7 @@ void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model) {
     // Si quieres usar valores del Wizard, asegúrate de pasarlos a esta clase.
     double w = this->m_chipWidth;
     double h = this->m_chipHeight;
+    qDebug() << "[ChipVisualizer] renderFromDeviceModel using dimensions:" << w << "x" << h;
 
     // TODO: Si en el futuro añades las variables al .h, descomenta esto:
     // w = this->m_chipWidth;
@@ -474,13 +503,95 @@ void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model) {
     double hh = h / 2.0;
 
     // --- DISTRIBUCIÓN DE PINES ---
-    // Calculamos cuántos pines van en cada lado para distribución equitativa
+    // Distribución PROPORCIONAL a las dimensiones del chip
+    // para mantener spacing uniforme entre todos los pines
     int nTop = 0, nRight = 0, nBottom = 0, nLeft = 0;
 
-    nTop = (totalPins + 3) / 4;
-    nRight = (totalPins > nTop) ? (totalPins - nTop + 2) / 3 : 0;
-    nBottom = (totalPins > nTop + nRight) ? (totalPins - nTop - nRight + 1) / 2 : 0;
-    nLeft = totalPins - nTop - nRight - nBottom;
+    // Calcular perímetro total y densidad de pines
+    double perimeterTotal = 2.0 * w + 2.0 * h;
+    double pinsPerUnit = static_cast<double>(totalPins) / perimeterTotal;
+
+    // Asignar pines proporcionalmente a cada lado según su longitud
+    nTop = static_cast<int>(std::round(w * pinsPerUnit));
+    nBottom = static_cast<int>(std::round(w * pinsPerUnit));
+    nLeft = static_cast<int>(std::round(h * pinsPerUnit));
+    nRight = static_cast<int>(std::round(h * pinsPerUnit));
+
+    // Ajustar diferencia por redondeo
+    int assigned = nTop + nBottom + nLeft + nRight;
+    int diff = totalPins - assigned;
+
+    if (diff > 0) {
+        // Faltan pines: agregar al lado más largo
+        if (w >= h) {
+            nTop += diff;  // Agregar al lado horizontal
+        } else {
+            nLeft += diff;  // Agregar al lado vertical
+        }
+    } else if (diff < 0) {
+        // Sobran pines: quitar del lado más largo
+        if (w >= h) {
+            nTop += diff;  // diff es negativo, resta
+        } else {
+            nLeft += diff;
+        }
+    }
+
+    qDebug() << "[ChipVisualizer] Pin distribution for" << w << "x" << h
+             << ": Top=" << nTop << ", Right=" << nRight
+             << ", Bottom=" << nBottom << ", Left=" << nLeft
+             << "(Total=" << (nTop + nBottom + nLeft + nRight) << ")";
+
+    // --- CALCULAR TAMAÑO DE FUENTE ÓPTIMO ---
+    // Basado en el mínimo spacing entre pines
+    const double margin = 40.0;
+    double minSpacing = 1000.0;  // Valor inicial grande
+
+    if (nLeft > 1) {
+        double spacing = (h - 2 * margin) / (nLeft - 1);
+        minSpacing = std::min(minSpacing, spacing);
+    }
+    if (nRight > 1) {
+        double spacing = (h - 2 * margin) / (nRight - 1);
+        minSpacing = std::min(minSpacing, spacing);
+    }
+    if (nTop > 1) {
+        double spacing = (w - 2 * margin) / (nTop - 1);
+        minSpacing = std::min(minSpacing, spacing);
+    }
+    if (nBottom > 1) {
+        double spacing = (w - 2 * margin) / (nBottom - 1);
+        minSpacing = std::min(minSpacing, spacing);
+    }
+
+    // Calcular tamaño de fuente: entre 4pt y 8pt basado en spacing
+    // Si spacing < 15 → fuente 4pt
+    // Si spacing > 30 → fuente 8pt
+    // Entre 15-30 → interpolación lineal
+    int labelFontSize = 7;  // Default
+    if (minSpacing < 1000.0) {  // Si se calculó algo
+        if (minSpacing < 15.0) {
+            labelFontSize = 4;
+        } else if (minSpacing > 30.0) {
+            labelFontSize = 8;
+        } else {
+            // Interpolación lineal: 15→4pt, 30→8pt
+            labelFontSize = 4 + static_cast<int>((minSpacing - 15.0) / 15.0 * 4.0);
+        }
+    }
+
+    // --- CALCULAR TAMAÑO DE PIN UNIFORME ---
+    // CRÍTICO: Todos los pines deben tener el MISMO tamaño
+    // Usamos el spacing mínimo como restricción global
+    double uniformPinSize = 8.0;  // Default
+    if (minSpacing < 1000.0) {
+        uniformPinSize = minSpacing * 0.8;
+        // Clamp entre 4px y 18px
+        if (uniformPinSize > 18.0) uniformPinSize = 18.0;
+        if (uniformPinSize < 4.0) uniformPinSize = 4.0;
+    }
+    qDebug() << "[ChipVisualizer] Uniform pin size:" << uniformPinSize
+             << "(based on min spacing:" << minSpacing << ")";
 
     // -----------------------------------------------------------------------
     // RENDERIZADO (DIBUJO EN SCENE)
@@ -492,80 +603,87 @@ void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model) {
         m_chipBody = m_scene->addRect(-hw, -hh, w, h, QPen(Qt::black, 2), QBrush(Qt::white));
         m_scene->addEllipse(-hw + 8, -hh + 8, 15, 15, QPen(Qt::black, 2), QBrush(Qt::white));
 
-        // Texto IDCODE (encima del chip)
-        QFont idFont; idFont.setPointSize(14); idFont.setBold(true);
-        QGraphicsTextItem* idItem = m_scene->addText(idCodeText, idFont);
-        QRectF r = idItem->boundingRect();
-        // Posicionar encima del chip con un margen de 10px
-        idItem->setPos(-r.width() / 2.0, -hh - r.height() - 10);
+        // Texto del nombre del device (arriba) - Con más margen para evitar colisión con pines
+        QFont nameFont; nameFont.setPointSize(16); nameFont.setBold(true);
+        QGraphicsTextItem* nameItem = m_scene->addText(deviceName, nameFont);
+        QRectF nameRect = nameItem->boundingRect();
+        nameItem->setPos(-nameRect.width() / 2.0, -hh - nameRect.height() - 70);
 
-        // --- BUCLE DE COLOCACIÓN (Orden: Top -> Right -> Bottom -> Left) ---
+        // Texto IDCODE (debajo del nombre) - Posicionado entre el nombre y los pines
+        QFont idFont; idFont.setPointSize(12);
+        QGraphicsTextItem* idItem = m_scene->addText(QString("IDCODE: ") + idCodeText, idFont);
+        idItem->setDefaultTextColor(QColor(100, 100, 100));
+        QRectF idRect = idItem->boundingRect();
+        idItem->setPos(-idRect.width() / 2.0, -hh - idRect.height() - 40);
+
+        // --- BUCLE DE COLOCACIÓN (Orden Anti-Horario: Left -> Bottom -> Right -> Top) ---
         int pIdx = 0;
         const double margin = 40.0;
 
-        // 1. SUPERIOR (Top): De Izquierda a Derecha -> Pin 1 empieza aquí
-        if (nTop > 0) {
-            double available = w - (2 * margin);
-            double spacing = (nTop > 1) ? available / (nTop - 1) : available;
-            // Tamaño adaptativo (entre 4px y 18px)
-            double pinSize = (spacing * 0.8 > 18.0) ? 18.0 : ((spacing * 0.8 < 4.0) ? 4.0 : spacing * 0.8);
-
-            for (int i = 0; i < nTop && pIdx < totalPins; ++i) {
-                double x = -hw + margin + (i * spacing) - (pinSize / 2.0);
-                // Y = Borde superior (-hh) menos tamaño del pin (hacia fuera)
-                addPin(QString::fromStdString(pins[pIdx].name),
-                    QString::fromStdString(pins[pIdx].pinNumber),
-                    x, -hh - pinSize, PinSide::TOP, pinSize);
-                pIdx++;
-            }
-        }
-
-        // 2. DERECHO (Right): De Arriba hacia Abajo
-        if (nRight > 0) {
-            double available = h - (2 * margin);
-            double spacing = (nRight > 1) ? available / (nRight - 1) : available;
-            double pinSize = (spacing * 0.8 > 18.0) ? 18.0 : ((spacing * 0.8 < 4.0) ? 4.0 : spacing * 0.8);
-
-            for (int i = 0; i < nRight && pIdx < totalPins; ++i) {
-                double y = -hh + margin + (i * spacing) - (pinSize / 2.0);
-                // X = Borde derecho (+hw)
-                addPin(QString::fromStdString(pins[pIdx].name),
-                    QString::fromStdString(pins[pIdx].pinNumber),
-                    hw, y, PinSide::RIGHT, pinSize);
-                pIdx++;
-            }
-        }
-
-        // 3. INFERIOR (Bottom): De Derecha a Izquierda
-        if (nBottom > 0) {
-            double available = w - (2 * margin);
-            double spacing = (nBottom > 1) ? available / (nBottom - 1) : available;
-            double pinSize = (spacing * 0.8 > 18.0) ? 18.0 : ((spacing * 0.8 < 4.0) ? 4.0 : spacing * 0.8);
-
-            for (int i = 0; i < nBottom && pIdx < totalPins; ++i) {
-                // Avanzamos de derecha a izquierda
-                double x = hw - margin - (i * spacing) - (pinSize / 2.0);
-                // Y = Borde inferior (+hh)
-                addPin(QString::fromStdString(pins[pIdx].name),
-                    QString::fromStdString(pins[pIdx].pinNumber),
-                    x, hh, PinSide::BOTTOM, pinSize);
-                pIdx++;
-            }
-        }
-
-        // 4. IZQUIERDO (Left): De Abajo hacia Arriba
+        // 1. IZQUIERDO (Left): De Arriba hacia Abajo -> Pin 1 empieza aquí (arriba a la izquierda)
         if (nLeft > 0) {
             double available = h - (2 * margin);
             double spacing = (nLeft > 1) ? available / (nLeft - 1) : available;
-            double pinSize = (spacing * 0.8 > 18.0) ? 18.0 : ((spacing * 0.8 < 4.0) ? 4.0 : spacing * 0.8);
 
             for (int i = 0; i < nLeft && pIdx < totalPins; ++i) {
-                // Avanzamos de abajo hacia arriba
-                double y = hh - margin - (i * spacing) - (pinSize / 2.0);
+                // Avanzamos de arriba hacia abajo
+                double y = -hh + margin + (i * spacing) - (uniformPinSize / 2.0);
                 // X = Borde izquierdo (-hw) menos tamaño del pin (hacia fuera)
                 addPin(QString::fromStdString(pins[pIdx].name),
                     QString::fromStdString(pins[pIdx].pinNumber),
-                    -hw - pinSize, y, PinSide::LEFT, pinSize);
+                    -hw - uniformPinSize, y, PinSide::LEFT, uniformPinSize, labelFontSize,
+                    QString::fromStdString(pins[pIdx].type));
+                pIdx++;
+            }
+        }
+
+        // 2. INFERIOR (Bottom): De Izquierda a Derecha
+        if (nBottom > 0) {
+            double available = w - (2 * margin);
+            double spacing = (nBottom > 1) ? available / (nBottom - 1) : available;
+
+            for (int i = 0; i < nBottom && pIdx < totalPins; ++i) {
+                // Avanzamos de izquierda a derecha
+                double x = -hw + margin + (i * spacing) - (uniformPinSize / 2.0);
+                // Y = Borde inferior (+hh)
+                addPin(QString::fromStdString(pins[pIdx].name),
+                    QString::fromStdString(pins[pIdx].pinNumber),
+                    x, hh, PinSide::BOTTOM, uniformPinSize, labelFontSize,
+                    QString::fromStdString(pins[pIdx].type));
+                pIdx++;
+            }
+        }
+
+        // 3. DERECHO (Right): De Abajo hacia Arriba
+        if (nRight > 0) {
+            double available = h - (2 * margin);
+            double spacing = (nRight > 1) ? available / (nRight - 1) : available;
+
+            for (int i = 0; i < nRight && pIdx < totalPins; ++i) {
+                // Avanzamos de abajo hacia arriba
+                double y = hh - margin - (i * spacing) - (uniformPinSize / 2.0);
+                // X = Borde derecho (+hw)
+                addPin(QString::fromStdString(pins[pIdx].name),
+                    QString::fromStdString(pins[pIdx].pinNumber),
+                    hw, y, PinSide::RIGHT, uniformPinSize, labelFontSize,
+                    QString::fromStdString(pins[pIdx].type));
+                pIdx++;
+            }
+        }
+
+        // 4. SUPERIOR (Top): De Derecha a Izquierda
+        if (nTop > 0) {
+            double available = w - (2 * margin);
+            double spacing = (nTop > 1) ? available / (nTop - 1) : available;
+
+            for (int i = 0; i < nTop && pIdx < totalPins; ++i) {
+                // Avanzamos de derecha a izquierda
+                double x = hw - margin - (i * spacing) - (uniformPinSize / 2.0);
+                // Y = Borde superior (-hh) menos tamaño del pin (hacia fuera)
+                addPin(QString::fromStdString(pins[pIdx].name),
+                    QString::fromStdString(pins[pIdx].pinNumber),
+                    x, -hh - uniformPinSize, PinSide::TOP, uniformPinSize, labelFontSize,
+                    QString::fromStdString(pins[pIdx].type));
                 pIdx++;
             }
         }
@@ -601,6 +719,16 @@ void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model) {
         // Tamaño dinámico: entre 4px y 25px
         double size = (minSp * 0.8 > 25.0) ? 25.0 : ((minSp * 0.8 < 4.0) ? 4.0 : minSp * 0.8);
 
+        // Calcular tamaño de fuente para BGA (basado en minSp)
+        int labelFontSize = 7;
+        if (minSp < 15.0) {
+            labelFontSize = 4;
+        } else if (minSp > 30.0) {
+            labelFontSize = 8;
+        } else {
+            labelFontSize = 4 + static_cast<int>((minSp - 15.0) / 15.0 * 4.0);
+        }
+
         // 3. Dibujar Cuerpo (FONDO BLANCO SOLICITADO)
         // Usamos Qt::white en lugar de QColor(50,50,50)
         m_chipBody = m_scene->addRect(-hw, -hh, w, h, QPen(Qt::black, 3), QBrush(Qt::white));
@@ -608,12 +736,18 @@ void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model) {
         // Marca de Pin 1 (Círculo negro en esquina superior izquierda)
         m_scene->addEllipse(-hw + 8, -hh + 8, 15, 15, QPen(Qt::black, 2), QBrush(Qt::black));
 
-        // Texto IDCODE (encima del chip) - Modo BGA
-        QFont idFont; idFont.setPointSize(14); idFont.setBold(true);
-        QGraphicsTextItem* idItem = m_scene->addText(idCodeText, idFont);
-        QRectF rBGA = idItem->boundingRect();
-        // Posicionar encima del chip con un margen de 10px
-        idItem->setPos(-rBGA.width() / 2.0, -hh - rBGA.height() - 10);
+        // Texto del nombre del device (arriba) - Modo BGA (con más margen)
+        QFont nameFontBGA; nameFontBGA.setPointSize(16); nameFontBGA.setBold(true);
+        QGraphicsTextItem* nameItemBGA = m_scene->addText(deviceName, nameFontBGA);
+        QRectF nameRectBGA = nameItemBGA->boundingRect();
+        nameItemBGA->setPos(-nameRectBGA.width() / 2.0, -hh - nameRectBGA.height() - 70);
+
+        // Texto IDCODE (debajo del nombre) - Modo BGA (posicionado entre nombre y chip)
+        QFont idFontBGA; idFontBGA.setPointSize(12);
+        QGraphicsTextItem* idItemBGA = m_scene->addText(QString("IDCODE: ") + idCodeText, idFontBGA);
+        idItemBGA->setDefaultTextColor(QColor(100, 100, 100));
+        QRectF idRectBGA = idItemBGA->boundingRect();
+        idItemBGA->setPos(-idRectBGA.width() / 2.0, -hh - idRectBGA.height() - 40);
 
         // 4. Bucle de colocación (Izquierda -> Derecha, Arriba -> Abajo)
         int idx = 0;
@@ -626,13 +760,13 @@ void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model) {
             double x = -hw + (padding / 2.0) + (c * spX) - (size / 2.0);
             double y = -hh + (padding / 2.0) + (r * spY) - (size / 2.0);
 
-            // Side: Determinamos el lado solo para la orientación de la etiqueta (opcional en BGA)
-            // Usamos una lógica simple: primera mitad = TOP, segunda = BOTTOM para etiquetas
-            PinSide labelSide = (r < rows / 2) ? TOP : BOTTOM;
+            // Side: En BGA (CENTER_GRID), todos los labels van DEBAJO para evitar colisiones
+            PinSide labelSide = BOTTOM;
 
             addPin(QString::fromStdString(p.name),
                 QString::fromStdString(p.pinNumber),
-                x, y, labelSide, size);
+                x, y, labelSide, size, labelFontSize,
+                QString::fromStdString(p.type));
             idx++;
         }
     }
@@ -646,7 +780,7 @@ void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model) {
     LegendItem items[] = {
         {VisualPinState::HIGH, "HIGH - Logic level 1"},
         {VisualPinState::LOW, "LOW - Logic level 0"},
-        {VisualPinState::OSCILLATING, "OSCILLATING - Rapid changes"},
+        {VisualPinState::OSCILLATING, "HIGH-Z - High impedance"},
         {VisualPinState::UNKNOWN, "UNKNOWN - Not sampled"},
         {VisualPinState::LINKAGE, "LINKAGE - Not controllable"}
     };
@@ -711,6 +845,7 @@ void ChipVisualizer::renderPlaceholder(uint32_t idcode) {
     // Usamos m_chipWidth en lugar de m_customWidth
     double w = m_chipWidth;
     double h = m_chipHeight;
+    qDebug() << "[ChipVisualizer] renderPlaceholder using dimensions:" << w << "x" << h;
 
     // Dibujar cuerpo base usando las dimensiones personalizadas
     m_chipBody = m_scene->addRect(-w / 2, -h / 2, w, h,

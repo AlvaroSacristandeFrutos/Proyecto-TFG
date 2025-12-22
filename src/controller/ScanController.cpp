@@ -306,6 +306,11 @@ namespace JTAG {
         return engine->reset();
     }
 
+    bool ScanController::resetJTAGStateMachine() {
+        if (!engine) return false;
+        return engine->resetJTAGStateMachine();
+    }
+
     // ============================================================================
     // CONTROL DE PINES
     // ============================================================================
@@ -576,6 +581,12 @@ namespace JTAG {
         }
     }
 
+    void ScanController::forceReloadInstruction() {
+        if (scanWorker) {
+            scanWorker->forceReloadInstruction();
+        }
+    }
+
     void ScanController::setPinAsync(const std::string& pinName, PinLevel level) {
         if (!deviceModel || !scanWorker) return;
 
@@ -667,15 +678,13 @@ namespace JTAG {
         if (scanWorker) {
             scanWorker->setScanMode(mode);
 
-            // Determinar si el modo requiere que el thread esté corriendo
-            bool needsRunningThread = (mode == ScanMode::SAMPLE ||
-                                      mode == ScanMode::SAMPLE_SINGLE_SHOT ||
-                                      mode == ScanMode::EXTEST ||
-                                      mode == ScanMode::INTEST);
+            // Auto-iniciar el thread si el modo requiere polling y no está corriendo
+            // BYPASS no necesita polling (modo estático)
+            bool needsPolling = (mode != ScanMode::BYPASS);
 
-            // Si necesita thread y no está corriendo, iniciarlo
-            if (needsRunningThread && workerThread && !workerThread->isRunning()) {
-                qDebug() << "[ScanController] Starting thread for mode:" << static_cast<int>(mode);
+            if (needsPolling && workerThread && !workerThread->isRunning()) {
+                qDebug() << "[ScanController] Auto-starting thread for mode:" << static_cast<int>(mode);
+                scanWorker->start();
                 workerThread->start();
             }
         }

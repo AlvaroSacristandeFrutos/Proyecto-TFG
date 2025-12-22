@@ -28,6 +28,7 @@ namespace JTAG {
 
         // Control TAP
         bool reset();
+        bool resetJTAGStateMachine();  // Emergency reset: 5×TMS=1 + 1×TMS=0
         bool gotoState(TAPState targetState);
         TAPState getCurrentState() const { return currentState; }
 

@@ -6,7 +6,9 @@
 #include <QRadioButton>
 #include <QVBoxLayout>
 #include <QLabel>
-#include <QDoubleSpinBox>
+#include <QSpinBox>
+#include <QLineEdit>
+#include <QGroupBox>
 
 class PackageTypePage : public QWizardPage {
     Q_OBJECT
@@ -20,17 +22,21 @@ public:
     };
 
     PackageType getSelectedType() const;
-    // --- NUEVOS GETTERS ---
-    double getChipWidth() const;
-    double getChipHeight() const;
+    int getHorizontalPins() const;
+    int getVerticalPins() const;
+    QString getDeviceName() const;
+
+private slots:
+    void onPackageTypeChanged();
 
 private:
     QRadioButton* m_edgePinsRadio;
     QRadioButton* m_centerPinsRadio;
 
-    // --- NUEVOS CONTROLES ---
-    QDoubleSpinBox* m_widthSpin;
-    QDoubleSpinBox* m_heightSpin;
+    QLineEdit* m_deviceNameEdit;
+    QSpinBox* m_horizontalPinsSpin;
+    QSpinBox* m_verticalPinsSpin;
+    QGroupBox* m_dimGroup;
     QLabel* m_idcodeLabel;
 
     uint32_t m_idcode;
@@ -43,9 +49,9 @@ public:
     explicit NewProjectWizard(uint32_t idcode, QWidget* parent = nullptr);
 
     PackageTypePage::PackageType getPackageType() const;
-    // --- NUEVOS WRAPPERS ---
-    double getChipWidth() const;
-    double getChipHeight() const;
+    int getHorizontalPins() const;
+    int getVerticalPins() const;
+    QString getDeviceName() const;
 
 private:
     PackageTypePage* m_packagePage;
