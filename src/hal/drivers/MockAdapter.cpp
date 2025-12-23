@@ -72,7 +72,7 @@ namespace JTAG {
         for (size_t i = 0; i < numBytes; i++) {
             // Genera un patrón tipo "contador binario" mezclado con "walking ones"
             // Esto hará que los LEDs de la GUI parpadeen de forma interesante
-            tdo[i] = (simulationCounter + i) ^ 0xAA;
+            tdo[i] = static_cast<uint8_t>((simulationCounter + i) ^ 0xAA);
         }
 
         return true;

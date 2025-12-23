@@ -4,6 +4,7 @@
 #include <QThread>
 #include <atomic>
 #include <vector>
+#include <memory>
 #include <mutex>
 #include <map>
 #include "../core/BoundaryScanEngine.h"
@@ -44,7 +45,8 @@ namespace JTAG {
         bool hasDirtyPins() const;
 
     signals:
-        void pinsUpdated(std::vector<PinLevel> pins);
+        // FASE 2: shared_ptr evita 3 copias profundas en Qt::QueuedConnection
+        void pinsUpdated(std::shared_ptr<const std::vector<PinLevel>> pins);
         void errorOccurred(QString message);
         void started();
         void stopped();
@@ -77,4 +79,5 @@ namespace JTAG {
 
 } // namespace JTAG
 
-Q_DECLARE_METATYPE(std::vector<JTAG::PinLevel>)
+// FASE 2: Registrar shared_ptr para señales Qt cross-thread
+Q_DECLARE_METATYPE(std::shared_ptr<const std::vector<JTAG::PinLevel>>)

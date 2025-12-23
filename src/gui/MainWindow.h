@@ -118,7 +118,8 @@ private slots:
     void onWaveGoto();
 
     // NUEVOS slots para recibir datos del worker
-    void onPinsDataReady(std::vector<JTAG::PinLevel> pins);
+    // FASE 2: shared_ptr evita copias innecesarias del vector completo
+    void onPinsDataReady(std::shared_ptr<const std::vector<JTAG::PinLevel>> pins);
     void onScanError(QString message);
 
     // JTAG Mode selection slots
@@ -208,8 +209,23 @@ private:
     int currentSampleDecimation = 1;    // Sample decimation (1 = all samples)
     int sampleCounter = 0;              // Counter for sample decimation
 
-    // Waveform signal tracking (replaces tableWidgetWaveform)
-    std::vector<std::string> waveformSignals;  // Lista ordenada de nombres de señales
+    // ===== OPTIMIZACIÓN: Cache de índices directos para waveform =====
+    // En lugar de buscar getPinInfo() en cada sample (20+ búsquedas @ 50Hz),
+    // guardamos el índice BSR directo UNA VEZ cuando se añade la señal
+    struct WaveformSignalInfo {
+        std::string name;
+        int dataIndex;   // Índice directo en vector BSR (inputCell o outputCell)
+                        // -1 si el pin no tiene celdas JTAG
+    };
+    std::vector<WaveformSignalInfo> waveformSignals;  // Cache de señales con índices
+    // =================================================================
+
+    // ===== RENDER THROTTLING: Desacople captura vs. renderizado =====
+    // Solución para Event Loop Starvation con polling ultra-rápido (1ms)
+    QTimer* m_waveformRenderTimer;      // Timer @ 30 FPS para redraw
+    bool m_waveformNeedsRedraw;         // Bandera dirty para redraw pendiente
+    // ================================================================
+
     QLabel* waveformZoomLabel;  // Zoom indicator in toolbar
 
     // Helper methods
@@ -225,7 +241,7 @@ private:
     // Backend integration helpers
     void updatePinsTable();
     void updateControlPanel(const std::vector<JTAG::PinLevel>& pinLevels);
-    void captureWaveformSample();
+    void captureWaveformSample(const std::vector<JTAG::PinLevel>& currentPins);
     void redrawWaveform();
     void enableControlsAfterConnection(bool enable);
     void renderChipVisualization();

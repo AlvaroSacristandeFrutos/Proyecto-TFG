@@ -57,6 +57,9 @@ public:
     void renderPlaceholder(uint32_t idcode); // Dibuja el chip vacío con el ID
     void setLabelFontSize(int size);
 
+    // OPTIMIZACIÓN: Getter para diffing
+    VisualPinState getState() const { return m_visualState; }
+
 
 
 protected:

@@ -24,11 +24,14 @@ void SettingsDialog::setupUI()
     QFormLayout *pollingLayout = new QFormLayout(pollingGroup);
 
     pollingIntervalCombo = new QComboBox(this);
+    pollingIntervalCombo->addItem("1 ms", 1);
+    pollingIntervalCombo->addItem("5 ms", 5);
+    pollingIntervalCombo->addItem("10 ms", 10);
     pollingIntervalCombo->addItem("50 ms", 50);
     pollingIntervalCombo->addItem("100 ms", 100);
     pollingIntervalCombo->addItem("250 ms", 250);
     pollingIntervalCombo->addItem("500 ms", 500);
-    pollingIntervalCombo->setCurrentIndex(1);  // Default: 100 ms
+    pollingIntervalCombo->setCurrentIndex(4);  // Default: 100 ms
 
     QLabel *pollingDescription = new QLabel(
         "How often to poll the JTAG device and update the UI.\n"

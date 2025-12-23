@@ -811,7 +811,13 @@ void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model, const
 void ChipVisualizer::updatePinState(const QString& pinName, VisualPinState state) {
     // m_pins usa pinName como key
     if (m_pins.contains(pinName)) {
-        m_pins[pinName]->setState(state);
+        // ===== OPTIMIZACIÓN: Diffing - solo actualizar si cambió =====
+        // Con 200+ pins, evita 200+ paint events innecesarios
+        PinGraphicsItem* pin = m_pins[pinName];
+        if (pin->getState() != state) {
+            pin->setState(state);
+        }
+        // =============================================================
     }
 }
 

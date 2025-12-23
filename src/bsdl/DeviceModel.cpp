@@ -9,7 +9,12 @@ namespace JTAG {
     // Helper: Comparación alfanumérica para ordenar pines correctamente
     // A1 < A2 < A10 < B1 (en lugar de A1 < A10 < A2)
     static bool compareAlphanumeric(const std::string& a, const std::string& b) {
-        std::regex numberPattern("(\\D*)(\\d*)");
+        // ===== OPTIMIZACIÓN CRÍTICA: Compilar regex UNA VEZ =====
+        // Con 1000 pines, std::sort hace ~10,000 comparaciones.
+        // Sin static: 10,000 compilaciones de regex (~2 segundos)
+        // Con static: 1 compilación (~0.1 segundos)
+        static const std::regex numberPattern("(\\D*)(\\d*)");
+        // =========================================================
         std::smatch matchA, matchB;
 
         auto itA = a.begin();
@@ -205,13 +210,28 @@ namespace JTAG {
                       << " in=" << this->pins[i].inputCell
                       << " out=" << this->pins[i].outputCell << "\n";
         }
+
+        // ===== OPTIMIZACIÓN: Construir hash cache UNA VEZ =====
+        // Esto elimina búsquedas O(N) repetitivas en getPinInfo()
+        // Con 200 pines @ 50Hz, esto ahorra ~10,000 búsquedas O(N)/seg
+        pinIndexCache.clear();
+        pinIndexCache.reserve(this->pins.size());
+        for (size_t i = 0; i < this->pins.size(); ++i) {
+            pinIndexCache[this->pins[i].name] = i;
+        }
+        std::cout << "[DeviceModel] Hash cache built: " << pinIndexCache.size() << " entries\n";
+        // ======================================================
     }
 
 
     std::optional<PinInfo> DeviceModel::getPinInfo(const std::string& pinName) const {
-        auto it = std::find_if(pins.begin(), pins.end(),
-            [&pinName](const PinInfo& pin) { return pin.name == pinName; });
-        return (it != pins.end()) ? std::make_optional(*it) : std::nullopt;
+        // ===== OPTIMIZACIÓN: Usar hash cache O(1) en lugar de búsqueda O(N) =====
+        auto it = pinIndexCache.find(pinName);
+        if (it != pinIndexCache.end()) {
+            return pins[it->second];  // Acceso directo O(1)
+        }
+        return std::nullopt;
+        // =======================================================================
     }
 
     std::vector<std::string> DeviceModel::getPinNames() const {

@@ -597,10 +597,12 @@ namespace JTAG {
     }
 
     // Slot para recibir datos del worker
-    void ScanController::onPinsUpdated(std::vector<PinLevel> pins) {
-        qDebug() << "[ScanController::onPinsUpdated] Received" << pins.size() << "pins from worker";
+    // FASE 2: Recibe shared_ptr, NO hace copia, solo re-emite el puntero
+    void ScanController::onPinsUpdated(std::shared_ptr<const std::vector<PinLevel>> pins) {
+        qDebug() << "[ScanController::onPinsUpdated] Received" << pins->size() << "pins from worker (shared_ptr)";
         // Actualizar cache local si es necesario
         // Reemitir señal para la GUI (esto hace que MainWindow la reciba)
+        // NO COPIA: solo incrementa refcount del shared_ptr
         emit pinsDataReady(pins);
         qDebug() << "[ScanController::onPinsUpdated] Signal pinsDataReady emitted";
     }

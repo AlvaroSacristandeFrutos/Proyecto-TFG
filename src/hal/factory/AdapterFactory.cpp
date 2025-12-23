@@ -45,9 +45,10 @@ namespace JTAG {
                 try {
                     uint32_t serial = std::stoul(deviceID.substr(6));
                     jlink->setTargetSerialNumber(serial);
-                } catch (const std::exception& e) {
-                    // If parsing fails, just use default (first available)
-                    std::cerr << "[Factory] Warning: Failed to parse J-Link serial from deviceID: " << deviceID << "\n";
+                }
+                catch (const std::exception& e) {
+                    // Agregar e.what() al log
+                    std::cerr << "[Factory] Warning: Failed to parse J-Link serial (" << e.what() << ") from deviceID: " << deviceID << "\n";
                 }
             }
 

@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 
 // --- INCLUDES OBLIGATORIOS ---
 #include <vector>
@@ -29,7 +29,7 @@ namespace JTAG {
 
     struct JtagPath {
         uint8_t tmsBits; // Ristra de bits a seguir para el destino
-        uint8_t bitCount; //Nº de saltos hasta el siguiente estado
+        uint8_t bitCount; //NÂº de saltos hasta el siguiente estado
     };
 
     std::string tapStateToString(TAPState state); //Definimos los estados posibles
@@ -39,11 +39,11 @@ namespace JTAG {
         JtagStateMachine() = default;
         ~JtagStateMachine() = default;
 
-        static JtagPath getPath(TAPState from, TAPState to); //Defino la funcion que obtiene el path más corto para ese estado
+        static JtagPath getPath(TAPState from, TAPState to); //Defino la funcion que obtiene el path mas corto para ese estado
         static TAPState nextState(TAPState current, bool tms); //Defino el salto al siguiente
 
     private:
-        static const JtagPath lookupTable[16][16]; //Tabla estática para mejorar la velocidad y no hacerlo dinámicamente
+        static const JtagPath lookupTable[16][16]; //Tabla easttica para mejorar la velocidad y no hacerlo dinamicamente
     };
 
 } // namespace JTAG

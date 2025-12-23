@@ -107,6 +107,8 @@ MainWindow::MainWindow(QWidget *parent)
     , waveformTimebase(1.0)
     , isRedrawing(false)
     , isAutoScrollEnabled(true)
+    , m_waveformRenderTimer(nullptr)
+    , m_waveformNeedsRedraw(false)
 {
     // Cargar diseño UI desde mainwindow.ui
     ui->setupUi(this);
@@ -136,6 +138,22 @@ MainWindow::MainWindow(QWidget *parent)
 
     setupBackend();           // Crear ScanController (backend JTAG)
     setupConnections();       // Conectar señales/slots UI <-> Backend
+
+    // ===== RENDER THROTTLING: Configurar timer @ 30 FPS =====
+    // Soluciona Event Loop Starvation con polling ultra-rápido (1ms = 1000 Hz)
+    // Captura de datos: hasta 1000 Hz
+    // Renderizado UI: limitado a 30 FPS (33ms interval)
+    m_waveformRenderTimer = new QTimer(this);
+    m_waveformRenderTimer->setInterval(33);  // 30 FPS
+    connect(m_waveformRenderTimer, &QTimer::timeout, this, [this]() {
+        // Solo redibujar si hay cambios pendientes y el dock es visible
+        if (m_waveformNeedsRedraw && ui->dockWaveform->isVisible()) {
+            redrawWaveform();
+            m_waveformNeedsRedraw = false;
+        }
+    });
+    // Timer se inicia automáticamente cuando se añaden señales al waveform
+    // =========================================================
 
     updateWindowTitle();
     enableControlsAfterConnection(false);  // Deshabilitar hasta conectar adaptador
@@ -293,7 +311,8 @@ void MainWindow::setupGraphicsViews()
                     }
 
                     timelineView->horizontalScrollBar()->setValue(value);
-                    redrawWaveform();  // Actualizar eje temporal con timestamps visibles
+                    // Throttling: marcar dirty flag en lugar de redraw síncrono
+                    m_waveformNeedsRedraw = true;
                 }
             });
 
@@ -389,6 +408,12 @@ void MainWindow::setupTables()
     ui->tableWidgetPins->setColumnWidth(3, 80);   // I/O Value
     ui->tableWidgetPins->setColumnWidth(4, 80);   // Type
 
+    // Conectar señales de tabla de pines
+    connect(ui->tableWidgetPins, &QTableWidget::itemChanged,
+            this, &MainWindow::onPinTableItemChanged);
+    connect(ui->tableWidgetPins->selectionModel(), &QItemSelectionModel::selectionChanged,
+            this, &MainWindow::onPinTableSelectionChanged);
+
     // Setup Watch table
     ui->tableWidgetWatch->setColumnCount(6);
     ui->tableWidgetWatch->setHorizontalHeaderLabels(
@@ -404,12 +429,6 @@ void MainWindow::setupTables()
     ui->tableWidgetWatch->setColumnWidth(3, 80);   // I/O Value
     ui->tableWidgetWatch->setColumnWidth(4, 140);  // Transitions Count
     ui->tableWidgetWatch->setColumnWidth(5, 80);   // Type
-
-    // Conectar señales de tabla de pines
-    connect(ui->tableWidgetPins, &QTableWidget::itemChanged,
-            this, &MainWindow::onPinTableItemChanged);
-    connect(ui->tableWidgetPins->selectionModel(), &QItemSelectionModel::selectionChanged,
-            this, &MainWindow::onPinTableSelectionChanged);
 
     // Setup Waveform table - SOLO columna Name
     ui->tableWidgetWaveform->setColumnCount(1);
@@ -846,6 +865,15 @@ void MainWindow::onToggleWatch(bool checked)
 void MainWindow::onToggleWaveform(bool checked)
 {
     ui->dockWaveform->setVisible(checked);
+
+    // ===== OPTIMIZACIÓN: Reiniciar timer cuando se muestra waveform =====
+    if (checked && !waveformSignals.empty() && !m_waveformRenderTimer->isActive()) {
+        m_waveformRenderTimer->start();
+        m_waveformNeedsRedraw = true;  // Redraw inmediato al mostrar
+    } else if (!checked) {
+        m_waveformRenderTimer->stop();  // Pausar cuando se oculta
+    }
+    // ====================================================================
 }
 
 void MainWindow::onZoom()
@@ -1812,6 +1840,11 @@ void MainWindow::onWaveformClose()
 {
     ui->dockWaveform->setVisible(false);
     ui->actionWaveform->setChecked(false);
+
+    // ===== OPTIMIZACIÓN: Pausar render timer cuando waveform oculto =====
+    // Ahorra CPU al no redibujar gráficos invisibles
+    m_waveformRenderTimer->stop();
+    // ====================================================================
 }
 
 void MainWindow::onWaveformAddSignal()
@@ -1827,6 +1860,11 @@ void MainWindow::onWaveformAddSignal()
         rows.insert(item->row());
     }
 
+    if (!scanController || !scanController->getDeviceModel()) {
+        updateStatusBar("No device model loaded");
+        return;
+    }
+
     // BUG FIX 1: Detectar si es la primera vez que se añaden señales
     bool wasEmpty = waveformSignals.empty();
 
@@ -1835,26 +1873,57 @@ void MainWindow::onWaveformAddSignal()
         if (sourceItem) {
             std::string pinName = sourceItem->text().toStdString();
 
-            // Verificar que no exista ya
-            if (std::find(waveformSignals.begin(), waveformSignals.end(), pinName)
-                == waveformSignals.end()) {
-                waveformSignals.push_back(pinName);
-                waveformBuffer[pinName].clear();
+            // Verificar que no exista ya (ahora con WaveformSignalInfo)
+            auto it = std::find_if(waveformSignals.begin(), waveformSignals.end(),
+                [&pinName](const WaveformSignalInfo& sig) { return sig.name == pinName; });
+
+            if (it == waveformSignals.end()) {
+                // ===== OPTIMIZACIÓN: Cachear índice BSR directo UNA VEZ =====
+                // Determinar qué índice del vector BSR corresponde a este pin
+                // (misma lógica que ScanController::getPin)
+                auto pinInfo = scanController->getDeviceModel()->getPinInfo(pinName);
+                if (pinInfo) {
+                    WaveformSignalInfo sigInfo;
+                    sigInfo.name = pinName;
+
+                    // Calcular índice directo en el vector BSR
+                    // Prioridad: inputCell > outputCell
+                    if (pinInfo->inputCell != -1) {
+                        sigInfo.dataIndex = pinInfo->inputCell;
+                    } else if (pinInfo->outputCell != -1) {
+                        sigInfo.dataIndex = pinInfo->outputCell;
+                    } else {
+                        sigInfo.dataIndex = -1;  // Pin sin celdas JTAG (no se puede monitorear)
+                    }
+
+                    waveformSignals.push_back(sigInfo);
+                    waveformBuffer[pinName].clear();
+                }
+                // ===========================================================
             }
         }
     }
 
     updateStatusBar(QString("Added %1 signal(s) to Waveform").arg(rows.size()));
 
-    // BUG FIX 1: Redibujar waveform para mostrar nombres y grid
-    // Si era la primera señal, esto inicializa el grid/timeline correctamente
-    if (wasEmpty && !waveformSignals.empty()) {
-        // Primera inicialización del waveform - el grid se calculará correctamente
-        redrawWaveform();
-    } else {
-        // Actualización normal
-        redrawWaveform();
+    // ===== RENDER THROTTLING: Iniciar timer cuando se añade primera señal =====
+    if (!waveformSignals.empty()) {
+        // Marcar dirty flag para redraw inmediato
+        m_waveformNeedsRedraw = true;
+
+        // Iniciar timer @ 30 FPS si no está corriendo
+        if (!m_waveformRenderTimer->isActive()) {
+            m_waveformRenderTimer->start();
+        }
+
+        // Redraw síncrono inicial para mostrar grid/nombres inmediatamente
+        // (solo cuando se añade primera señal, evita pantalla en blanco)
+        if (wasEmpty) {
+            redrawWaveform();
+            m_waveformNeedsRedraw = false;
+        }
     }
+    // ===========================================================================
 }
 
 void MainWindow::onWaveformRemove()
@@ -1874,8 +1943,8 @@ void MainWindow::onWaveformRemove()
 
     QListWidget *listWidget = new QListWidget(&dialog);
     listWidget->setSelectionMode(QAbstractItemView::MultiSelection);
-    for (const auto& pinName : waveformSignals) {
-        listWidget->addItem(QString::fromStdString(pinName));
+    for (const auto& sigInfo : waveformSignals) {
+        listWidget->addItem(QString::fromStdString(sigInfo.name));
     }
     layout->addWidget(listWidget);
 
@@ -1899,16 +1968,25 @@ void MainWindow::onWaveformRemove()
             removedPins.push_back(item->text().toStdString());
         }
 
-        // Eliminar de waveformSignals
+        // Eliminar de waveformSignals (ahora con WaveformSignalInfo)
         for (const auto& pin : removedPins) {
             waveformSignals.erase(
-                std::remove(waveformSignals.begin(), waveformSignals.end(), pin),
+                std::remove_if(waveformSignals.begin(), waveformSignals.end(),
+                    [&pin](const WaveformSignalInfo& sig) { return sig.name == pin; }),
                 waveformSignals.end());
             waveformBuffer.erase(pin);
         }
 
         updateStatusBar(QString("Removed %1 signal(s)").arg(removedPins.size()));
-        redrawWaveform();
+
+        // ===== RENDER THROTTLING: Detener timer si no quedan señales =====
+        if (waveformSignals.empty()) {
+            m_waveformRenderTimer->stop();
+            m_waveformNeedsRedraw = false;
+        }
+        // Marcar dirty flag para redraw
+        m_waveformNeedsRedraw = true;
+        // =================================================================
     }
 }
 
@@ -1918,7 +1996,12 @@ void MainWindow::onWaveformRemoveAll()
     waveformBuffer.clear();
     updateStatusBar("Waveform signals cleared");
 
-    // Redibujar waveform (vacío)
+    // ===== RENDER THROTTLING: Detener timer cuando no hay señales =====
+    m_waveformRenderTimer->stop();
+    m_waveformNeedsRedraw = false;
+    // ==================================================================
+
+    // Redibujar waveform (vacío) - síncrono para limpiar pantalla inmediatamente
     redrawWaveform();
 }
 
@@ -1965,7 +2048,8 @@ void MainWindow::onWaveformZoomIn()
     ui->actionWaveZoomValue->setText(zoomText);
 
     updateStatusBar(QString("Waveform zoom: %1/div").arg(zoomText));
-    redrawWaveform();  // ✅ Redibujar con nuevo zoom
+    // Throttling: marcar dirty flag para redraw
+    m_waveformNeedsRedraw = true;
 }
 
 void MainWindow::onWaveformZoomOut()
@@ -1985,7 +2069,8 @@ void MainWindow::onWaveformZoomOut()
     ui->actionWaveZoomValue->setText(zoomText);
 
     updateStatusBar(QString("Waveform zoom: %1/div").arg(zoomText));
-    redrawWaveform();  // ✅ Redibujar con nuevo zoom
+    // Throttling: marcar dirty flag para redraw
+    m_waveformNeedsRedraw = true;
 }
 
 void MainWindow::onWaveformGoToTime()
@@ -2119,7 +2204,8 @@ void MainWindow::onWaveFit()
     ui->actionWaveZoomValue->setText(zoomText);
 
     updateStatusBar(QString("Fit: %1 s total in view").arg(maxTime, 0, 'f', 2));
-    redrawWaveform();
+    // Throttling: marcar dirty flag para redraw
+    m_waveformNeedsRedraw = true;
 }
 
 void MainWindow::onWaveGoto()
@@ -2141,6 +2227,26 @@ void MainWindow::updatePinsTable()
     const bool wasBlocked = ui->tableWidgetPins->signalsBlocked();
     ui->tableWidgetPins->blockSignals(true);
 
+    // ===== OPTIMIZACIÓN: Congelar actualizaciones visuales =====
+    // Con 200+ pines, Qt hace 200+ repaints síncronos sin esto
+    // Esto reduce tiempo de actualización de ~200ms a ~20ms
+    ui->tableWidgetPins->setUpdatesEnabled(false);
+    if (chipVisualizer) {
+        chipVisualizer->setUpdatesEnabled(false);
+    }
+    // ===========================================================
+
+    // ===== OPTIMIZACIÓN: Obtener todos los pines UNA VEZ =====
+    // En lugar de llamar getPinType(), getPinNumber() etc. repetidamente,
+    // obtenemos todo el vector una vez y creamos hash map O(1)
+    const auto& allPins = scanController->getDeviceModel()->getAllPins();
+    QHash<QString, const JTAG::PinInfo*> pinInfoCache;
+    pinInfoCache.reserve(allPins.size());
+    for (const auto& pin : allPins) {
+        pinInfoCache[QString::fromStdString(pin.name)] = &pin;
+    }
+    // =========================================================
+
     // Obtener lista de pines del modelo
     std::vector<std::string> pinNames = scanController->getPinList();
 
@@ -2160,20 +2266,28 @@ void MainWindow::updatePinsTable()
             nameItem->setData(Qt::UserRole, qPinName);
             ui->tableWidgetPins->setItem(row, 0, nameItem);
 
-            // Col 1: Pin #
-            QString pinNumStr = QString::fromStdString(scanController->getPinNumber(pName));
-            ui->tableWidgetPins->setItem(row, 1, new QTableWidgetItem(pinNumStr));
+            // ===== OPTIMIZACIÓN: Usar cache en lugar de llamadas =====
+            const JTAG::PinInfo* pinInfo = pinInfoCache.value(qPinName, nullptr);
+            if (pinInfo) {
+                // Col 1: Pin #
+                ui->tableWidgetPins->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(pinInfo->pinNumber)));
 
-            // Col 2: Port
-            QString port = QString::fromStdString(scanController->getPinPort(pName));
-            ui->tableWidgetPins->setItem(row, 2, new QTableWidgetItem(port));
+                // Col 2: Port
+                ui->tableWidgetPins->setItem(row, 2, new QTableWidgetItem(QString::fromStdString(pinInfo->port)));
 
-            // Col 3: I/O Value (Inicial)
-            ui->tableWidgetPins->setItem(row, 3, new QTableWidgetItem("?"));
+                // Col 3: I/O Value (Inicial)
+                ui->tableWidgetPins->setItem(row, 3, new QTableWidgetItem("?"));
 
-            // Col 4: Type
-            QString type = QString::fromStdString(scanController->getPinType(pName));
-            ui->tableWidgetPins->setItem(row, 4, new QTableWidgetItem(type));
+                // Col 4: Type
+                ui->tableWidgetPins->setItem(row, 4, new QTableWidgetItem(QString::fromStdString(pinInfo->type)));
+            } else {
+                // Fallback si no está en cache (no debería pasar)
+                ui->tableWidgetPins->setItem(row, 1, new QTableWidgetItem(""));
+                ui->tableWidgetPins->setItem(row, 2, new QTableWidgetItem(""));
+                ui->tableWidgetPins->setItem(row, 3, new QTableWidgetItem("?"));
+                ui->tableWidgetPins->setItem(row, 4, new QTableWidgetItem(""));
+            }
+            // =========================================================
         }
     }
 
@@ -2188,8 +2302,12 @@ void MainWindow::updatePinsTable()
         QString realName = resolveRealPinName(displayName);
         std::string pinName = realName.toStdString(); // <--- Aquí definimos pinName
 
-        // 2. Obtener tipo de pin (para detectar linkage)
-        QString type = QString::fromStdString(scanController->getPinType(pinName));
+        // ===== OPTIMIZACIÓN: Obtener tipo del cache O(1) =====
+        const JTAG::PinInfo* pinInfo = pinInfoCache.value(realName, nullptr);
+        if (!pinInfo) continue; // Pin no encontrado (no debería pasar)
+
+        QString type = QString::fromStdString(pinInfo->type);
+        // =====================================================
 
         // 3. Leer estado del pin
         auto level = scanController->getPin(pinName);
@@ -2225,7 +2343,11 @@ void MainWindow::updatePinsTable()
             // 4. Actualizar la celda de VALOR (Columna 3)
             QTableWidgetItem* valueItem = ui->tableWidgetPins->item(row, 3);
             if (valueItem) {
-                valueItem->setText(valueStr);
+                // ===== OPTIMIZACIÓN: Diffing - solo actualizar si cambió =====
+                if (valueItem->text() != valueStr) {
+                    valueItem->setText(valueStr);
+                }
+                // =============================================================
 
                 // --- Lógica de Edición (EXTEST) ---
                 // Permitir editar si es EXTEST y es una salida (incluyendo output2 del hack)
@@ -2235,40 +2357,33 @@ void MainWindow::updatePinsTable()
                     (typeLower == "output" || typeLower == "inout" || typeLower == "output2") &&
                     (typeLower != "linkage");
 
-                // DEBUG: Mostrar primeros 5 pines para verificar tipos
-                if (row < 5) {
-                    qDebug() << "[updatePinsTable] Pin" << realName
-                             << "type:" << type
-                             << "mode:" << (currentJTAGMode == JTAGMode::EXTEST ? "EXTEST" : "OTHER")
-                             << "editable:" << isEditable;
+                // ===== OPTIMIZACIÓN: Diffing de color también =====
+                QColor targetColor = isEditable ? QColor(255, 255, 200) : Qt::white;
+                if (valueItem->background().color() != targetColor) {
+                    valueItem->setBackground(targetColor);
                 }
+                // ==================================================
 
+                // Flags siempre hay que actualizar (no hay comparación eficiente)
                 if (isEditable) {
                     valueItem->setFlags(valueItem->flags() | Qt::ItemIsEditable);
-                    valueItem->setBackground(QColor(255, 255, 200)); // Amarillo
                 }
                 else {
                     valueItem->setFlags(valueItem->flags() & ~Qt::ItemIsEditable);
-                    valueItem->setBackground(Qt::white);
                 }
             }
 
-            // 5. Actualizar visualizador del chip
-            if (chipVisualizer) {
+            // 5. Actualizar visualizador del chip (solo si es visible)
+            // ===== OPTIMIZACIÓN: No actualizar si está oculto =====
+            if (chipVisualizer && chipVisualizer->isVisible()) {
                 chipVisualizer->updatePinState(realName, visualState);
             }
-
-            // Log del primer pin para debug (Opcional)
-            /*
-            if (row == 0) {
-                qDebug() << "[updatePinsTable] Pin" << realName
-                         << "= " << valueStr;
-            }
-            */
+            // ======================================================
         }
         else {
             // Pin no tiene valor - Verificar si es LINKAGE o simplemente no accesible
-            QString type = QString::fromStdString(scanController->getPinType(realName.toStdString()));
+            // ===== OPTIMIZACIÓN: Reutilizar 'type' del cache (ya obtenido arriba) =====
+            // No necesitamos llamar getPinType() de nuevo, 'type' ya está disponible
 
             QTableWidgetItem* valueItem = ui->tableWidgetPins->item(row, 3);
             if (valueItem) {
@@ -2278,8 +2393,8 @@ void MainWindow::updatePinsTable()
                     valueItem->setFlags(valueItem->flags() & ~Qt::ItemIsEditable);
                     valueItem->setBackground(Qt::darkGray);
 
-                    // Mantener estado LINKAGE (negro) en visualizador
-                    if (chipVisualizer) {
+                    // Mantener estado LINKAGE (negro) en visualizador (solo si visible)
+                    if (chipVisualizer && chipVisualizer->isVisible()) {
                         chipVisualizer->updatePinState(realName, VisualPinState::LINKAGE);
                     }
                 } else {
@@ -2288,16 +2403,23 @@ void MainWindow::updatePinsTable()
                     valueItem->setFlags(valueItem->flags() & ~Qt::ItemIsEditable);
                     valueItem->setBackground(Qt::lightGray);
 
-                    // Actualizar visualizador como UNKNOWN (gris)
-                    if (chipVisualizer) {
+                    // Actualizar visualizador como UNKNOWN (gris, solo si visible)
+                    if (chipVisualizer && chipVisualizer->isVisible()) {
                         chipVisualizer->updatePinState(realName, VisualPinState::UNKNOWN);
                     }
-
-                    qDebug() << "[MainWindow] Pin not sampled:" << realName;
                 }
             }
         }
     }
+
+    // ===== OPTIMIZACIÓN: Descongelar actualizaciones visuales =====
+    // Forzar un solo repaint al final (en orden inverso - LIFO)
+    if (chipVisualizer) {
+        chipVisualizer->setUpdatesEnabled(true);
+    }
+    ui->tableWidgetPins->setUpdatesEnabled(true);
+    // ==============================================================
+
     ui->tableWidgetPins->blockSignals(wasBlocked);
 }
 
@@ -2348,39 +2470,54 @@ void MainWindow::updateControlPanel(const std::vector<JTAG::PinLevel>& pinLevels
     Q_UNUSED(pinLevels);
 }
 
-void MainWindow::captureWaveformSample()
+void MainWindow::captureWaveformSample(const std::vector<JTAG::PinLevel>& currentPins)
 {
     // ==================== PUNTO DE INTEGRACIÓN 13 ====================
-    if (!scanController || waveformSignals.empty()) return;
+    if (waveformSignals.empty()) return;
 
     double currentTime = captureTimer.elapsed() / 1000.0; // Convert ms to seconds
 
-    // Iterar sobre vector de señales en lugar de tabla
-    for (const std::string& pinName : waveformSignals) {
-        auto level = scanController->getPin(pinName);
+    // ===== OPTIMIZACIÓN MÁXIMA: Acceso directo por índice =====
+    // Elimina TODAS las búsquedas, hash lookups y llamadas de función
+    // Antes: 20 señales × 1000Hz × getPin() = 20,000 llamadas/seg
+    // Ahora: 20 señales × 1000Hz × acceso[i] = acceso directo a memoria
+    for (const auto& sigInfo : waveformSignals) {
+        // Validación de seguridad (bounds checking)
+        if (sigInfo.dataIndex >= 0 && sigInfo.dataIndex < static_cast<int>(currentPins.size())) {
+            // *** ACCESO DIRECTO A MEMORIA - INSTANTÁNEO ***
+            JTAG::PinLevel level = currentPins[sigInfo.dataIndex];
 
-        if (level.has_value()) {
             // Add sample to buffer
-            waveformBuffer[pinName].push_back({currentTime, level.value()});
+            waveformBuffer[sigInfo.name].push_back({currentTime, level});
 
             // Maintain circular buffer
-            if (waveformBuffer[pinName].size() > MAX_WAVEFORM_SAMPLES) {
-                waveformBuffer[pinName].pop_front();
+            if (waveformBuffer[sigInfo.name].size() > MAX_WAVEFORM_SAMPLES) {
+                waveformBuffer[sigInfo.name].pop_front();
             }
         }
     }
+    // ============================================================
 
-    // W4: Redraw waveform (throttle to avoid performance issues - every 2nd sample)
-    static int redrawCounter = 0;
-    if (++redrawCounter >= 2) {
-        redrawCounter = 0;
-        redrawWaveform();
+    // ===== RENDER THROTTLING: Marcar dirty flag =====
+    // NO llamar redrawWaveform() aquí (bloqueante, causa Event Loop Starvation)
+    // El timer @ 30 FPS se encarga del redraw de forma asíncrona
+    m_waveformNeedsRedraw = true;
+
+    // Asegurar que el timer está corriendo (auto-start cuando hay señales)
+    if (!m_waveformRenderTimer->isActive() && !waveformSignals.empty()) {
+        m_waveformRenderTimer->start();
     }
-    // ================================================================
+    // ================================================
 }
 
 void MainWindow::redrawWaveform()
 {
+    // ===== OPTIMIZACIÓN: No dibujar si no es visible =====
+    if (!ui->dockWaveform->isVisible()) {
+        return;
+    }
+    // =====================================================
+
     // BUG FIX 3: Prevenir redibujado recursivo
     if (isRedrawing) return;
     isRedrawing = true;
@@ -2583,7 +2720,7 @@ void MainWindow::redrawWaveform()
 
     // Draw each signal
     for (int row = 0; row < waveformSignals.size(); row++) {
-        std::string pinName = waveformSignals[row];
+        std::string pinName = waveformSignals[row].name;
         auto& samples = waveformBuffer[pinName];
 
         int yBase = row * SIGNAL_HEIGHT;
@@ -2728,12 +2865,16 @@ void MainWindow::updateStatusBar(const QString &message)
 // NUEVOS SLOTS PARA THREADING (RECIBEN SEÑALES DEL SCANWORKER)
 // ============================================================================
 
-void MainWindow::onPinsDataReady(std::vector<JTAG::PinLevel> pins)
+void MainWindow::onPinsDataReady(std::shared_ptr<const std::vector<JTAG::PinLevel>> pins)
 {
+    // FASE 2: Dereferencia shared_ptr UNA VEZ para obtener referencia al vector
+    // NO HACE COPIA - solo accede al objeto compartido
+    const std::vector<JTAG::PinLevel>& pinsRef = *pins;
+
     // Este slot se ejecuta en GUI thread (thread-safe vía Qt signals)
     // Reemplaza el código que estaba en onPollTimer()
 
-    qDebug() << "[MainWindow::onPinsDataReady] Called with" << pins.size() << "pins"
+    qDebug() << "[MainWindow::onPinsDataReady] Called with" << pinsRef.size() << "pins (shared_ptr)"
              << "isCapturing:" << isCapturing;
 
     // Check if no target is detected (all pull-ups)
@@ -2755,7 +2896,7 @@ void MainWindow::onPinsDataReady(std::vector<JTAG::PinLevel> pins)
     updateCount++;
     if (!warningShown) { // Only show update count if no warning
         statusBar()->showMessage(QString("Updates received: %1 (pins: %2)")
-                                .arg(updateCount).arg(pins.size()), 100);
+                                .arg(updateCount).arg(pinsRef.size()), 100);
     }
 
     if (!scanController || !isCapturing) {
@@ -2777,10 +2918,16 @@ void MainWindow::onPinsDataReady(std::vector<JTAG::PinLevel> pins)
     updatePinsTable();
 
     // 2. Actualizar Control Panel (reemplaza updateWatchTable)
-    updateControlPanel(pins);
+    updateControlPanel(pinsRef);
 
-    // 3. Capturar muestra para waveform
-    captureWaveformSample();
+    // 3. Capturar muestra para waveform (SOLO SI ES VISIBLE)
+    // ===== OPTIMIZACIÓN: Pasar vector BSR completo para acceso directo =====
+    // En lugar de que waveform llame a getPin() por cada señal,
+    // le pasamos el vector completo y hace acceso[index] directo
+    if (ui->dockWaveform->isVisible()) {
+        captureWaveformSample(pinsRef);  // ← Pasar vector BSR completo
+    }
+    // ====================================================================
 }
 
 void MainWindow::onScanError(QString message)

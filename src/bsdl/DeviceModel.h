@@ -4,6 +4,7 @@
 #include <string>       // Corrige: "string no es miembro de std"
 #include <vector>       // Corrige: vectores
 #include <map>          // Corrige: mapas
+#include <unordered_map> // OPTIMIZACIÓN: Hash cache O(1)
 #include <optional>     // Corrige: optional
 #include <cstdint>      // Corrige: uint32_t
 // --------------------------------------
@@ -57,6 +58,12 @@ namespace JTAG {
 
         std::vector<PinInfo> pins;
         std::map<std::string, uint32_t> instructions;
+
+        // ===== OPTIMIZACIÓN: Hash cache para búsqueda O(1) =====
+        // Con 200 pines @ 50Hz, búsqueda O(N) lineal causa lag masivo
+        // Este mapa reduce getPinInfo() de O(N) a O(1)
+        std::unordered_map<std::string, size_t> pinIndexCache;
+        // =======================================================
     };
 
 }

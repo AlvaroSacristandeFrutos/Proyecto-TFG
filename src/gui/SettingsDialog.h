@@ -15,7 +15,7 @@
  * @brief Settings dialog for performance configuration
  *
  * Allows user to configure:
- * - Polling interval (refresh rate): 50ms, 100ms, 250ms, 500ms
+ * - Polling interval (refresh rate): 1ms, 5ms, 10ms, 50ms, 100ms, 250ms, 500ms
  * - Sample decimation: capture 1 of every X samples (1-100)
  */
 class SettingsDialog : public QDialog

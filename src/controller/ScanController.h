@@ -100,13 +100,13 @@ namespace JTAG {
         void setPinAsync(const std::string& pinName, PinLevel level);
 
     signals:
-        // Señales para la GUI (emitidas por el worker, re-emitidas por controller)
-        void pinsDataReady(std::vector<PinLevel> pins);
+        // FASE 2: shared_ptr evita copias profundas en la cadena Worker→Controller→MainWindow
+        void pinsDataReady(std::shared_ptr<const std::vector<PinLevel>> pins);
         void errorOccurred(QString message);
 
     private slots:
         // Slots para recibir señales del worker y re-emitirlas
-        void onPinsUpdated(std::vector<PinLevel> pins);
+        void onPinsUpdated(std::shared_ptr<const std::vector<PinLevel>> pins);
         void onWorkerError(QString message);
         void onWorkerStopped();  // Handle worker stop (for single-shot)
 
