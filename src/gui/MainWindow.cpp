@@ -2710,10 +2710,10 @@ void MainWindow::redrawWaveform()
 void MainWindow::updateWindowTitle(const QString &filename)
 {
     if (filename.isEmpty()) {
-        setWindowTitle("Untitled - TopJTAG Probe");
+        setWindowTitle("JtagScannerQt");
     } else {
         QFileInfo fileInfo(filename);
-        setWindowTitle(fileInfo.fileName() + " - TopJTAG Probe");
+        setWindowTitle(fileInfo.fileName() + " - JtagScannerQt");
     }
 }
 
