@@ -41,9 +41,6 @@ public:
 private slots:
     // File menu actions
     void onNewProjectWizard();
-    void onOpen();
-    void onSave();
-    void onSaveAs();
     void onExit();
 
     // View menu actions
@@ -61,7 +58,6 @@ private slots:
     void onRun();
     void onReset();
     void onJTAGReset();
-    void onDeviceInstruction();
     void onDeviceBSDLFile();
     void onDevicePackage();
     void onDeviceProperties();
@@ -79,11 +75,6 @@ private slots:
 
     // Watch menu actions
     void onWatchShow();
-    void onWatchAddSignal();
-    void onWatchRemove();
-    void onWatchRemoveAll();
-    void onWatchZeroTransitionCounter();
-    void onWatchZeroAllTransitionCounters();
 
     // Waveform menu actions
     void onWaveformClose();
@@ -98,8 +89,6 @@ private slots:
 
     // Help menu actions
     void onHelpContents();
-    void onTurnOnLogging();
-    void onRegister();
     void onAbout();
 
     // Toolbar actions

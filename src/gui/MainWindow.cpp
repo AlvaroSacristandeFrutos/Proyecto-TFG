@@ -566,13 +566,9 @@ void MainWindow::setupConnections()
 {
     // File menu connections
     connect(ui->actionNew_Project_Wizard, &QAction::triggered, this, &MainWindow::onNewProjectWizard);
-    connect(ui->actionOpen, &QAction::triggered, this, &MainWindow::onOpen);
-    connect(ui->actionSave, &QAction::triggered, this, &MainWindow::onSave);
-    connect(ui->actionSave_As, &QAction::triggered, this, &MainWindow::onSaveAs);
     connect(ui->actionExit, &QAction::triggered, this, &MainWindow::onExit);
     
     // View menu connections
-    connect(ui->actionZoom_Menu, &QAction::triggered, this, &MainWindow::onZoom);
     connect(ui->actionSettings, &QAction::triggered, this, &MainWindow::onSettings);
 
     // Scan menu connections
@@ -581,7 +577,6 @@ void MainWindow::setupConnections()
     connect(ui->actionRun, &QAction::triggered, this, &MainWindow::onRun);
     connect(ui->actionReset, &QAction::triggered, this, &MainWindow::onReset);
     connect(ui->actionJTAG_Reset, &QAction::triggered, this, &MainWindow::onJTAGReset);
-    connect(ui->actionDevice_Instruction, &QAction::triggered, this, &MainWindow::onDeviceInstruction);
     connect(ui->actionDevice_BSDL_File, &QAction::triggered, this, &MainWindow::onDeviceBSDLFile);
     connect(ui->actionDevice_Package, &QAction::triggered, this, &MainWindow::onDevicePackage);
     connect(ui->actionDevice_Properties, &QAction::triggered, this, &MainWindow::onDeviceProperties);
@@ -599,11 +594,6 @@ void MainWindow::setupConnections()
     
     // Watch menu connections
     connect(ui->actionWatch_Show, &QAction::triggered, this, &MainWindow::onWatchShow);
-    connect(ui->actionWatch_Add_Signal, &QAction::triggered, this, &MainWindow::onWatchAddSignal);
-    connect(ui->actionWatch_Remove, &QAction::triggered, this, &MainWindow::onWatchRemove);
-    connect(ui->actionWatch_Remove_All, &QAction::triggered, this, &MainWindow::onWatchRemoveAll);
-    connect(ui->actionWatch_Zero_Transition_Counter, &QAction::triggered, this, &MainWindow::onWatchZeroTransitionCounter);
-    connect(ui->actionWatch_Zero_All_Transition_Counters, &QAction::triggered, this, &MainWindow::onWatchZeroAllTransitionCounters);
     
     // Waveform menu connections
     connect(ui->actionWaveform_Close, &QAction::triggered, this, &MainWindow::onWaveformClose);
@@ -618,8 +608,6 @@ void MainWindow::setupConnections()
     
     // Help menu connections
     connect(ui->actionHelp_Contents, &QAction::triggered, this, &MainWindow::onHelpContents);
-    connect(ui->actionTurn_On_Logging, &QAction::triggered, this, &MainWindow::onTurnOnLogging);
-    connect(ui->actionRegister, &QAction::triggered, this, &MainWindow::onRegister);
     connect(ui->actionAbout, &QAction::triggered, this, &MainWindow::onAbout);
     
     // Toolbar connections
@@ -656,7 +644,6 @@ void MainWindow::enableControlsAfterConnection(bool enable)
     ui->actionRun->setEnabled(enable && isDeviceInitialized);
     ui->actionJTAG_Reset->setEnabled(enable);
     ui->actionExamine_Chain->setEnabled(enable);
-    ui->actionDevice_Instruction->setEnabled(enable && isDeviceDetected);
     ui->actionDevice_BSDL_File->setEnabled(enable);
     ui->actionDevice_Properties->setEnabled(enable && isDeviceDetected);
     
@@ -816,32 +803,6 @@ void MainWindow::onNewProjectWizard()
     }
 }
 
-void MainWindow::onOpen()
-{
-    QString fileName = QFileDialog::getOpenFileName(this,
-        tr("Open Project"), "", tr("Project Files (*.jtag *.prj);;All Files (*)"));
-    
-    if (!fileName.isEmpty()) {
-        updateWindowTitle(fileName);
-        updateStatusBar("Project opened: " + fileName);
-    }
-}
-
-void MainWindow::onSave()
-{
-    updateStatusBar("Project saved");
-}
-
-void MainWindow::onSaveAs()
-{
-    QString fileName = QFileDialog::getSaveFileName(this,
-        tr("Save Project As"), "", tr("Project Files (*.jtag *.prj);;All Files (*)"));
-    
-    if (!fileName.isEmpty()) {
-        updateWindowTitle(fileName);
-        updateStatusBar("Project saved as: " + fileName);
-    }
-}
 
 void MainWindow::onExit()
 {
@@ -1288,11 +1249,6 @@ void MainWindow::onJTAGReset()
  * Placeholder para diálogo futuro de selección manual de instrucciones JTAG.
  * Actualmente las instrucciones se cambian mediante los botones SAMPLE/EXTEST.
  */
-void MainWindow::onDeviceInstruction()
-{
-    QMessageBox::information(this, "Device Instruction", "Device Instruction dialog - To be implemented");
-}
-
 /**
  * @brief Carga un archivo BSDL (Boundary Scan Description Language)
  *
@@ -1747,91 +1703,6 @@ void MainWindow::onWatchShow()
     ui->actionWatch->setChecked(true);
 }
 
-void MainWindow::onWatchAddSignal()
-{
-    if (!controlPanel) return;
-
-    // Obtener pin seleccionado en tabla Pins
-    int currentRow = ui->tableWidgetPins->currentRow();
-    if (currentRow < 0) {
-        QMessageBox::information(this, "No Selection",
-            "Please select a pin in the Pins table first");
-        return;
-    }
-
-    // Extraer información del pin
-    QTableWidgetItem* nameItem = ui->tableWidgetPins->item(currentRow, 0);
-    QTableWidgetItem* pinNumItem = ui->tableWidgetPins->item(currentRow, 1);
-
-    if (!nameItem || !pinNumItem) return;
-
-    std::string pinName = nameItem->text().toStdString();
-    std::string pinNumber = pinNumItem->text().toStdString();
-
-    // Añadir al Control Panel
-    controlPanel->addPin(pinName, pinNumber);
-
-    // Mostrar dock si está oculto
-    ui->dockWatch->setVisible(true);
-
-    updateStatusBar(QString("Added %1 to Control Panel")
-        .arg(QString::fromStdString(pinName)));
-}
-
-void MainWindow::onWatchRemove()
-{
-    if (!controlPanel) return;
-
-    std::string selectedPin = controlPanel->getSelectedPin();
-    if (selectedPin.empty()) {
-        QMessageBox::information(this, "No Selection",
-            "Please select a pin to remove");
-        return;
-    }
-
-    controlPanel->removePin(selectedPin);
-    updateStatusBar(QString("Removed %1 from Control Panel")
-        .arg(QString::fromStdString(selectedPin)));
-}
-
-void MainWindow::onWatchRemoveAll()
-{
-    if (!controlPanel) return;
-
-    controlPanel->removeAllPins();
-    updateStatusBar("Control Panel cleared");
-}
-
-void MainWindow::onWatchZeroTransitionCounter()
-{
-    QList<QTableWidgetItem*> selectedItems = ui->tableWidgetWatch->selectedItems();
-    if (selectedItems.isEmpty()) {
-        updateStatusBar("No signals selected");
-        return;
-    }
-
-    QSet<int> rows;
-    for (auto item : selectedItems) {
-        rows.insert(item->row());
-    }
-
-    for (int row : rows) {
-        QTableWidgetItem *nameItem = ui->tableWidgetWatch->item(row, 0);
-        if (nameItem) {
-            std::string pinName = nameItem->text().toStdString();
-            transitionCounters[pinName] = 0;
-        }
-    }
-
-    updateStatusBar(QString("Zeroed %1 counter(s)").arg(rows.size()));
-}
-
-void MainWindow::onWatchZeroAllTransitionCounters()
-{
-    transitionCounters.clear();
-    updateStatusBar("All transition counters zeroed");
-}
-
 // ============================================================================
 // WAVEFORM MENU SLOTS
 // ============================================================================
@@ -2101,16 +1972,6 @@ void MainWindow::onHelpContents()
         "3. Load BSDL file (Scan > Device BSDL File)\n"
         "4. Run to capture pin states (Scan > Run or F5)\n"
         "5. Control pins via Pins panel");
-}
-
-void MainWindow::onTurnOnLogging()
-{
-    updateStatusBar("Logging feature - To be implemented");
-}
-
-void MainWindow::onRegister()
-{
-    updateStatusBar("Registration - Not applicable");
 }
 
 void MainWindow::onAbout()
