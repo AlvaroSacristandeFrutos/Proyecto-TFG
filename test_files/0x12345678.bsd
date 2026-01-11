@@ -1,0 +1,119 @@
+-- File Name     : 12345678.bsd
+-- Device        : MOCK_DEVICE
+-- IDCODE        : 0x12345678
+-- Adapted for   : JTAG Boundary Scanner Project
+
+entity MOCK_12345678 is
+
+  generic (PHYSICAL_PIN_MAP : string := "FBGA672");
+
+  port (
+    -- Entradas y Salidas de prueba (Simulando el MAX10)
+    IO_LED0, IO_LED1, IO_LED2, IO_LED3,
+    IO_LED4, IO_LED5, IO_LED6, IO_LED7,
+    
+    IO_BTN0, IO_BTN1, 
+    
+    TCK, TDI, TMS : in bit;
+    TDO : out bit;
+    VCC, GND : linkage bit
+  );
+
+  use STD_1149_1_2001.all;
+
+  attribute COMPONENT_CONFORMANCE of MOCK_12345678 : entity is "STD_1149_1_2001";
+
+  attribute PIN_MAP of MOCK_12345678 : entity is PHYSICAL_PIN_MAP;
+  
+  constant FBGA672 : PIN_MAP_STRING :=
+    "IO_LED0 : A1, IO_LED1 : A2, IO_LED2 : A3, IO_LED3 : A4," &
+    "IO_LED4 : B1, IO_LED5 : B2, IO_LED6 : B3, IO_LED7 : B4," &
+    "IO_BTN0 : C1, IO_BTN1 : C2," &
+    "TCK : D3, TDI : N7, TDO : N6, TMS : C2," &
+    "VCC : V9, GND : G8";
+
+  attribute TAP_SCAN_IN    of TDI : signal is true;
+  attribute TAP_SCAN_OUT   of TDO : signal is true;
+  attribute TAP_SCAN_MODE  of TMS : signal is true;
+  attribute TAP_SCAN_CLOCK of TCK : signal is (10.0e6, BOTH);
+
+  attribute INSTRUCTION_LENGTH of MOCK_12345678 : entity is 10;
+
+  attribute INSTRUCTION_OPCODE of MOCK_12345678 : entity is
+    "BYPASS   (1111111111)," &
+    "EXTEST   (0000001111)," &
+    "SAMPLE   (0000000101)," &
+    "IDCODE   (0000000110)";
+
+  attribute INSTRUCTION_CAPTURE of MOCK_12345678 : entity is "0101010101";
+
+  -- *********************************************************************
+  -- * IDCODE DEFINITION                           *
+  -- *********************************************************************
+  -- Hex: 0x12345678
+  -- Bin: 0001 0010 0011 0100 0101 0110 0111 1000
+  -- Nota: El LSB es '0', lo cual es inusual en JTAG (suele ser 1), 
+  -- pero coincide con tu MockAdapter.
+  
+  attribute IDCODE_REGISTER of MOCK_12345678 : entity is
+    "0001" &             -- Version (1)
+    "0010001101000101" & -- Part Number (0x2345)
+    "01100111100" &      -- Manufacturer (0x33C)
+    "0";                 -- LSB (0) matches your MockAdapter code
+
+  attribute REGISTER_ACCESS of MOCK_12345678 : entity is 
+    "DEVICE_ID (IDCODE)";
+
+  -- *********************************************************************
+  -- * BOUNDARY SCAN REGISTER                         *
+  -- *********************************************************************
+  -- Longitud arbitraria para la demo. 
+  -- Tu MockAdapter genera datos dinámicos, así que veremos "ruido" aquí.
+  
+  attribute BOUNDARY_LENGTH of MOCK_12345678 : entity is 30;
+
+  attribute BOUNDARY_REGISTER of MOCK_12345678 : entity is
+    -- Num   Cell   Port      Function  Safe  [CCell  DisVal  Rslt]
+    "0      (BC_1,  IO_LED0,  output3,  X,    1,      1,      Z)," &
+    "1      (BC_1,  *,        control,  0)," &
+    "2      (BC_1,  IO_LED0,  input,    X)," &
+
+    "3      (BC_1,  IO_LED1,  output3,  X,    4,      1,      Z)," &
+    "4      (BC_1,  *,        control,  1)," &
+    "5      (BC_1,  IO_LED1,  input,    X)," &
+
+    "6      (BC_1,  IO_LED2,  output3,  X,    7,      1,      Z)," &
+    "7      (BC_1,  *,        control,  1)," &
+    "8      (BC_1,  IO_LED2,  input,    X)," &
+
+    "9      (BC_1,  IO_LED3,  output3,  X,    10,     1,      Z)," &
+    "10     (BC_1,  *,        control,  1)," &
+    "11     (BC_1,  IO_LED3,  input,    X)," &
+
+    "12     (BC_1,  IO_LED4,  output3,  X,    13,     1,      Z)," &
+    "13     (BC_1,  *,        control,  1)," &
+    "14     (BC_1,  IO_LED4,  input,    X)," &
+
+    "15     (BC_1,  IO_LED5,  output3,  X,    16,     1,      Z)," &
+    "16     (BC_1,  *,        control,  1)," &
+    "17     (BC_1,  IO_LED5,  input,    X)," &
+
+    "18     (BC_1,  IO_LED6,  output3,  X,    19,     1,      Z)," &
+    "19     (BC_1,  *,        control,  1)," &
+    "20     (BC_1,  IO_LED6,  input,    X)," &
+
+    "21     (BC_1,  IO_LED7,  output3,  X,    22,     1,      Z)," &
+    "22     (BC_1,  *,        control,  1)," &
+    "23     (BC_1,  IO_LED7,  input,    X)," &
+
+    -- Botones solo entrada
+    "24     (BC_1,  IO_BTN0,  input,    X)," &
+    "25     (BC_1,  IO_BTN1,  input,    X)," &
+    
+    -- Celdas internas extra para relleno
+    "26     (BC_4,  *,        internal, X)," &
+    "27     (BC_4,  *,        internal, X)," &
+    "28     (BC_4,  *,        internal, X)," &
+    "29     (BC_4,  *,        internal, X)";
+
+end MOCK_12345678;

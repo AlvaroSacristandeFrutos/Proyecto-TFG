@@ -1,0 +1,108 @@
+BSDLCatalog: Scanning directory: C:/Proyecto/BoundaryScanner/build/Debug/../../test_files
+BSDLCatalog: Found file: "0x12345231678.bsd"
+BSDLCatalog: Indexed IDCODE 0x131050dd -> "0x12345231678.bsd"
+BSDLCatalog: Found file: "0x12345678.bsd"
+BSDLCatalog: Indexed IDCODE 0x12345678 -> "0x12345678.bsd"
+BSDLCatalog: Found file: "tp1_laRVa.bsdl"
+BSDLCatalog: Indexed IDCODE 0x47fab -> "tp1_laRVa.bsdl"
+BSDLCatalog: Total devices indexed: 3
+[Mock] Simulator Started
+BoundaryScanEngine created (BSR length: 0 bits)
+BoundaryScanEngine::readIDCODE()
+[Mock] readIDCODE() - returning 0x12345678
+[ScanController::autoLoadBSDL] Called
+[ScanController::autoLoadBSDL] Looking for IDCODE 0x12345678
+[ScanController::autoLoadBSDL] Catalog has 3 entries
+BSDLCatalog::findByIDCODE() searching for 0x12345678
+BSDLCatalog has 3 entries:
+  - 0x00047fab -> C:/Proyecto/BoundaryScanner/build/Debug/../../test_files\tp1_laRVa.bsdl
+  - 0x12345678 -> C:/Proyecto/BoundaryScanner/build/Debug/../../test_files\0x12345678.bsd
+  - 0x131050dd -> C:/Proyecto/BoundaryScanner/build/Debug/../../test_files\0x12345231678.bsd
+BSDLCatalog: MATCH FOUND!
+[ScanController::autoLoadBSDL] FOUND! Path: C:/Proyecto/BoundaryScanner/build/Debug/../../test_files\0x12345678.bsd
+[DeviceModel] Loaded 10 pins from BSDL data.
+BoundaryScanEngine created (BSR length: 30 bits)
+[ScanController::autoLoadBSDL] loadBSDL returned: TRUE
+BoundaryScanEngine::reset() - TAP reset to TEST_LOGIC_RESET
+BoundaryScanEngine::loadInstruction(0x5, 5 bits)
+[Mock] scanIR() - irLength: 5 bits
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 1
+[Mock]   → SAMPLE mode: generating dynamic data
+[Mock]   → Generated: 0x01 0x26 0x4b 0x70 
+BoundaryScanEngine::loadInstruction(0xf, 5 bits)
+[Mock] scanIR() - irLength: 5 bits
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 2
+[Mock]   → EXTEST mode: loopback dataIn
+BoundaryScanEngine::reset() - TAP reset to TEST_LOGIC_RESET
+BoundaryScanEngine::loadInstruction(0x5, 5 bits)
+[Mock] scanIR() - irLength: 5 bits
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 3
+[Mock]   → EXTEST mode: loopback dataIn
+BoundaryScanEngine::loadInstruction(0xf, 5 bits)
+[Mock] scanIR() - irLength: 5 bits
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 4
+[Mock]   → EXTEST mode: loopback dataIn
+BoundaryScanEngine::loadInstruction(0x5, 0 bits)
+[Mock] scanIR() - irLength: 0 bits
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 5
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 6
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 7
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 8
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 9
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 10
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 11
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 12
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 13
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 14
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 15
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 16
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 17
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 18
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 19
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 20
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 21
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 22
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 23
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 24
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 25
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 26
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 27
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 28
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 29
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 30
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 31
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 32
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 33
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 34
+[Mock]   → EXTEST mode: loopback dataIn
+[Mock] scanDR() - drLength: 30 bits (4 bytes), dataIn.size: 4, counter: 35
+[Mock]   → EXTEST mode: loopback dataIn

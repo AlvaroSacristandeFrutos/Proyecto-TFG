@@ -1,0 +1,54 @@
+name: Build Windows Debug
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    # 1. Instalar Qt 6.7.3
+    # NOTA: Usamos 'win64_msvc2019_64' porque es el nombre oficial del artefacto en Qt.
+    # Es 100% compatible con Visual Studio 2022.
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v3
+      with:
+        version: '6.7.3'
+        host: 'windows'
+        target: 'desktop'
+        arch: 'win64_msvc2019_64'  # <-- ESTO DEBE SER 2019 PARA QUE DESCARGUE
+        modules: 'qtserialport'    # <-- Mantenemos el módulo necesario
+        cache: 'true'
+
+    # 2. Configurar CMake en DEBUG
+    - name: Configurar CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
+
+    # 3. Compilar en DEBUG
+    - name: Compilar
+      run: cmake --build build --config Debug
+
+    # 4. Añadir DLLs (Windeployqt)
+    - name: Añadir DLLs (Windeployqt)
+      shell: cmd
+      run: for /r build %%i in (*.exe) do windeployqt --debug --compiler-runtime --no-translations "%%i"
+
+    # 5. Subir Todo (Exe + DLLs)
+    - name: Subir Todo (Exe + DLLs)
+      uses: actions/upload-artifact@v4
+      with:
+        name: JtagScanner-Debug
+        path: |
+          build/**/*.exe
+          build/**/*.dll
+          build/**/platforms/
+          build/**/styles/
+          build/**/iconengines/
+          build/**/imageformats/
