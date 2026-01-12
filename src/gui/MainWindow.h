@@ -52,6 +52,8 @@ private slots:
     void onPollingIntervalChanged(int ms);      // Handle polling interval change
     void onSampleDecimationChanged(int decimation);  // Handle sample decimation change
     void onSamplesPerSecondChanged(int samplesPerSec);  // Handle sampling frequency change
+    void onWaveformFPSChanged(int fps);         // Handle waveform FPS change
+    void onChipVisFPSChanged(int fps);          // Handle chip visualizer FPS change
 
     // Scan menu actions
     void onJTAGConnection();
@@ -198,6 +200,8 @@ private:
     int currentPollInterval = 100;      // Polling interval in ms (default: 100ms)
     int currentSampleDecimation = 1;    // Sample decimation (1 = all samples)
     int currentSamplesPerSecond = 10;   // Sampling frequency (10 samples/s = default)
+    int currentWaveformFPS = 30;        // Waveform rendering FPS (default: 30 FPS)
+    int currentChipVisFPS = 10;         // ChipVisualizer rendering FPS (default: 10 FPS)
     int sampleCounter = 0;              // Counter for sample decimation
 
     // ===== OPTIMIZACIÓN: Cache de índices directos para waveform =====
@@ -213,8 +217,14 @@ private:
 
     // ===== RENDER THROTTLING: Desacople captura vs. renderizado =====
     // Solución para Event Loop Starvation con polling ultra-rápido (1ms)
-    QTimer* m_waveformRenderTimer;      // Timer @ 30 FPS para redraw
+    QTimer* m_waveformRenderTimer;      // Timer @ configurable FPS para redraw
     bool m_waveformNeedsRedraw;         // Bandera dirty para redraw pendiente
+
+    QTimer* m_chipVisRenderTimer;       // Timer @ configurable FPS para chip visualizer
+    bool m_chipVisNeedsRedraw;          // Bandera dirty para redraw pendiente
+
+    // Buffer de cambios pendientes del chip visualizer (solo último estado por pin)
+    std::map<QString, VisualPinState> m_pendingChipVisUpdates;
     // ================================================================
 
     QLabel* waveformZoomLabel;  // Zoom indicator in toolbar

@@ -3,6 +3,7 @@
 
 #include <QDialog>
 #include <QComboBox>
+#include <QSpinBox>
 #include <QSlider>
 #include <QLabel>
 #include <QPushButton>
@@ -15,7 +16,9 @@
  * @brief Settings dialog for performance configuration
  *
  * Allows user to configure:
- * - Polling interval (refresh rate): 1ms, 5ms, 10ms, 50ms, 100ms, 250ms, 500ms
+ * - Samples per second: 1-1000 (how often JTAG is polled)
+ * - Waveform FPS: 10-60 (rendering rate, all data captured)
+ * - ChipVisualizer FPS: 5-30 (rendering rate, all changes captured)
  * - Sample decimation: capture 1 of every X samples (1-100)
  */
 class SettingsDialog : public QDialog
@@ -30,21 +33,26 @@ public:
     int pollingInterval() const;
     int sampleDecimation() const;
     int samplesPerSecond() const;
+    int waveformFPS() const;
+    int chipVisFPS() const;
 
     // Setters
     void setPollingInterval(int ms);
     void setSampleDecimation(int decimation);
     void setSamplesPerSecond(int samplesPerSec);
+    void setWaveformFPS(int fps);
+    void setChipVisFPS(int fps);
 
 signals:
     void pollingIntervalChanged(int ms);
     void sampleDecimationChanged(int decimation);
     void samplesPerSecondChanged(int samplesPerSec);
+    void waveformFPSChanged(int fps);
+    void chipVisFPSChanged(int fps);
 
 private slots:
     void onPollingIntervalIndexChanged(int index);
     void onSampleDecimationValueChanged(int value);
-    void onSamplesPerSecondIndexChanged(int index);
     void onApplyClicked();
     void onAccepted();
 
@@ -56,7 +64,9 @@ private:
     QComboBox *pollingIntervalCombo;
     QSlider *sampleDecimationSlider;
     QLabel *decimationValueLabel;
-    QComboBox *samplesPerSecondCombo;
+    QSpinBox *samplesPerSecondSpin;
+    QSpinBox *waveformFPSSpin;
+    QSpinBox *chipVisFPSSpin;
     QDialogButtonBox *buttonBox;
     QPushButton *applyButton;
 
@@ -64,6 +74,8 @@ private:
     int m_pollingInterval;
     int m_sampleDecimation;
     int m_samplesPerSecond;
+    int m_waveformFPS;
+    int m_chipVisFPS;
 };
 
 #endif // SETTINGSDIALOG_H

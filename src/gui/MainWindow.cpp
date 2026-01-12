@@ -139,12 +139,13 @@ MainWindow::MainWindow(QWidget *parent)
     setupBackend();           // Crear ScanController (backend JTAG)
     setupConnections();       // Conectar señales/slots UI <-> Backend
 
-    // ===== RENDER THROTTLING: Configurar timer @ 30 FPS =====
+    // ===== RENDER THROTTLING: Configurar timer con FPS configurables =====
     // Soluciona Event Loop Starvation con polling ultra-rápido (1ms = 1000 Hz)
     // Captura de datos: hasta 1000 Hz
-    // Renderizado UI: limitado a 30 FPS (33ms interval)
+    // Renderizado UI: limitado a FPS configurables (default: 30 FPS)
     m_waveformRenderTimer = new QTimer(this);
-    m_waveformRenderTimer->setInterval(33);  // 30 FPS
+    int waveformIntervalMs = 1000 / currentWaveformFPS;
+    m_waveformRenderTimer->setInterval(waveformIntervalMs);
     connect(m_waveformRenderTimer, &QTimer::timeout, this, [this]() {
         // Solo redibujar si hay cambios pendientes y el dock es visible
         if (m_waveformNeedsRedraw && ui->dockWaveform->isVisible()) {
@@ -152,7 +153,26 @@ MainWindow::MainWindow(QWidget *parent)
             m_waveformNeedsRedraw = false;
         }
     });
+    qDebug() << "[MainWindow] Waveform render timer configured at" << currentWaveformFPS << "FPS (" << waveformIntervalMs << "ms)";
     // Timer se inicia automáticamente cuando se añaden señales al waveform
+
+    // ChipVisualizer render throttling timer
+    m_chipVisRenderTimer = new QTimer(this);
+    int chipVisIntervalMs = 1000 / currentChipVisFPS;
+    m_chipVisRenderTimer->setInterval(chipVisIntervalMs);
+    m_chipVisNeedsRedraw = false;
+    connect(m_chipVisRenderTimer, &QTimer::timeout, this, [this]() {
+        // Aplicar cambios pendientes si hay y el visualizador es visible
+        if (m_chipVisNeedsRedraw && chipVisualizer && chipVisualizer->isVisible()) {
+            for (const auto& [pinName, state] : m_pendingChipVisUpdates) {
+                chipVisualizer->updatePinState(pinName, state);
+            }
+            m_pendingChipVisUpdates.clear();
+            m_chipVisNeedsRedraw = false;
+        }
+    });
+    m_chipVisRenderTimer->start();  // Siempre activo
+    qDebug() << "[MainWindow] ChipVisualizer render timer configured at" << currentChipVisFPS << "FPS (" << chipVisIntervalMs << "ms)";
     // =========================================================
 
     updateWindowTitle();
@@ -234,6 +254,27 @@ void MainWindow::setupBackend()
             this, &MainWindow::onPinsDataReady);
     connect(scanController.get(), &JTAG::ScanController::errorOccurred,
             this, &MainWindow::onScanError);
+
+    // ===== Cargar configuración guardada =====
+    QSettings settings("TopJTAG", "BoundaryScanner");
+
+    // Cargar samples/second (default: 10 samples/s)
+    int savedSamplesPerSecond = settings.value("performance/samplesPerSecond", 10).toInt();
+    currentSamplesPerSecond = savedSamplesPerSecond;
+    scanController->setSamplesPerSecond(savedSamplesPerSecond);
+
+    // Cargar waveform FPS (default: 30 FPS)
+    int savedWaveformFPS = settings.value("performance/waveformFPS", 30).toInt();
+    currentWaveformFPS = savedWaveformFPS;
+    // Note: m_waveformRenderTimer se configura más adelante en el constructor
+
+    // Cargar chip visualizer FPS (default: 10 FPS)
+    int savedChipVisFPS = settings.value("performance/chipVisFPS", 10).toInt();
+    currentChipVisFPS = savedChipVisFPS;
+
+    qDebug() << "[MainWindow] Loaded settings - Samples/s:" << savedSamplesPerSecond
+             << ", Waveform FPS:" << savedWaveformFPS
+             << ", ChipVis FPS:" << savedChipVisFPS;
 }
 
 /**
@@ -856,6 +897,8 @@ void MainWindow::onSettings()
     dialog.setPollingInterval(currentPollInterval);
     dialog.setSampleDecimation(currentSampleDecimation);
     dialog.setSamplesPerSecond(currentSamplesPerSecond);
+    dialog.setWaveformFPS(currentWaveformFPS);
+    dialog.setChipVisFPS(currentChipVisFPS);
 
     connect(&dialog, &SettingsDialog::pollingIntervalChanged,
             this, &MainWindow::onPollingIntervalChanged);
@@ -863,6 +906,10 @@ void MainWindow::onSettings()
             this, &MainWindow::onSampleDecimationChanged);
     connect(&dialog, &SettingsDialog::samplesPerSecondChanged,
             this, &MainWindow::onSamplesPerSecondChanged);
+    connect(&dialog, &SettingsDialog::waveformFPSChanged,
+            this, &MainWindow::onWaveformFPSChanged);
+    connect(&dialog, &SettingsDialog::chipVisFPSChanged,
+            this, &MainWindow::onChipVisFPSChanged);
 
     dialog.exec();
 }
@@ -912,6 +959,42 @@ void MainWindow::onSamplesPerSecondChanged(int samplesPerSec)
     settings.setValue("performance/samplesPerSecond", samplesPerSec);
 
     updateStatusBar(QString("Sampling: %1 samples/s").arg(samplesPerSec));
+}
+
+void MainWindow::onWaveformFPSChanged(int fps)
+{
+    currentWaveformFPS = fps;
+
+    // Update waveform render timer if available
+    if (m_waveformRenderTimer) {
+        int intervalMs = 1000 / fps;
+        m_waveformRenderTimer->setInterval(intervalMs);
+        qDebug() << "[MainWindow] Waveform FPS changed to" << fps << "(" << intervalMs << "ms interval)";
+    }
+
+    // Save to settings
+    QSettings settings("TopJTAG", "BoundaryScanner");
+    settings.setValue("performance/waveformFPS", fps);
+
+    updateStatusBar(QString("Waveform rendering: %1 FPS").arg(fps));
+}
+
+void MainWindow::onChipVisFPSChanged(int fps)
+{
+    currentChipVisFPS = fps;
+
+    // Update chip visualizer render timer if available
+    if (m_chipVisRenderTimer) {
+        int intervalMs = 1000 / fps;
+        m_chipVisRenderTimer->setInterval(intervalMs);
+        qDebug() << "[MainWindow] ChipVisualizer FPS changed to" << fps << "(" << intervalMs << "ms interval)";
+    }
+
+    // Save to settings
+    QSettings settings("TopJTAG", "BoundaryScanner");
+    settings.setValue("performance/chipVisFPS", fps);
+
+    updateStatusBar(QString("Chip visualizer: %1 FPS").arg(fps));
 }
 
 /**
@@ -2254,10 +2337,11 @@ void MainWindow::updatePinsTable()
                 }
             }
 
-            // 5. Actualizar visualizador del chip (solo si es visible)
-            // ===== OPTIMIZACIÓN: No actualizar si está oculto =====
-            if (chipVisualizer && chipVisualizer->isVisible()) {
-                chipVisualizer->updatePinState(realName, visualState);
+            // 5. Actualizar visualizador del chip (throttled render)
+            // ===== OPTIMIZACIÓN: Acumular cambios y renderizar a FPS configurables =====
+            if (chipVisualizer) {
+                m_pendingChipVisUpdates[realName] = visualState;
+                m_chipVisNeedsRedraw = true;
             }
             // ======================================================
         }
@@ -2274,9 +2358,10 @@ void MainWindow::updatePinsTable()
                     valueItem->setFlags(valueItem->flags() & ~Qt::ItemIsEditable);
                     valueItem->setBackground(Qt::darkGray);
 
-                    // Mantener estado LINKAGE (negro) en visualizador (solo si visible)
-                    if (chipVisualizer && chipVisualizer->isVisible()) {
-                        chipVisualizer->updatePinState(realName, VisualPinState::LINKAGE);
+                    // Mantener estado LINKAGE (negro) en visualizador (throttled render)
+                    if (chipVisualizer) {
+                        m_pendingChipVisUpdates[realName] = VisualPinState::LINKAGE;
+                        m_chipVisNeedsRedraw = true;
                     }
                 } else {
                     // Pin normal sin valor (no accesible)
@@ -2284,9 +2369,10 @@ void MainWindow::updatePinsTable()
                     valueItem->setFlags(valueItem->flags() & ~Qt::ItemIsEditable);
                     valueItem->setBackground(Qt::lightGray);
 
-                    // Actualizar visualizador como UNKNOWN (gris, solo si visible)
-                    if (chipVisualizer && chipVisualizer->isVisible()) {
-                        chipVisualizer->updatePinState(realName, VisualPinState::UNKNOWN);
+                    // Actualizar visualizador como UNKNOWN (gris, throttled render)
+                    if (chipVisualizer) {
+                        m_pendingChipVisUpdates[realName] = VisualPinState::UNKNOWN;
+                        m_chipVisNeedsRedraw = true;
                     }
                 }
             }

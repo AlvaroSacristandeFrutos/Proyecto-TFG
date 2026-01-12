@@ -6,9 +6,11 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     , m_pollingInterval(100)
     , m_sampleDecimation(1)
     , m_samplesPerSecond(10)
+    , m_waveformFPS(30)
+    , m_chipVisFPS(10)
 {
     setWindowTitle("Performance Settings");
-    setMinimumWidth(400);
+    setMinimumWidth(450);
     setupUI();
 }
 
@@ -20,32 +22,75 @@ void SettingsDialog::setupUI()
 {
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
-    // === POLLING INTERVAL GROUP ===
-    QGroupBox *pollingGroup = new QGroupBox("Polling Interval (Refresh Rate)", this);
-    QFormLayout *pollingLayout = new QFormLayout(pollingGroup);
+    // === SAMPLING FREQUENCY GROUP ===
+    QGroupBox *samplingGroup = new QGroupBox("JTAG Sampling", this);
+    QFormLayout *samplingLayout = new QFormLayout(samplingGroup);
 
-    pollingIntervalCombo = new QComboBox(this);
-    pollingIntervalCombo->addItem("1 ms", 1);
-    pollingIntervalCombo->addItem("5 ms", 5);
-    pollingIntervalCombo->addItem("10 ms", 10);
-    pollingIntervalCombo->addItem("50 ms", 50);
-    pollingIntervalCombo->addItem("100 ms", 100);
-    pollingIntervalCombo->addItem("250 ms", 250);
-    pollingIntervalCombo->addItem("500 ms", 500);
-    pollingIntervalCombo->setCurrentIndex(4);  // Default: 100 ms
+    samplesPerSecondSpin = new QSpinBox(this);
+    samplesPerSecondSpin->setRange(1, 1000);  // Max teórico con overhead USB
+    samplesPerSecondSpin->setValue(10);
+    samplesPerSecondSpin->setSuffix(" samples/s");
+    samplesPerSecondSpin->setToolTip(
+        "How many JTAG TAP cycles per second\n"
+        "• Higher = more responsive, more CPU\n"
+        "• Lower = less responsive, less CPU\n"
+        "• Max 1000 samples/s (USB bandwidth limit)"
+    );
 
-    QLabel *pollingDescription = new QLabel(
-        "How often to poll the JTAG device and update the UI.\n"
-        "Lower values = smoother updates but higher CPU usage.",
+    QLabel *samplingDescription = new QLabel(
+        "<b>Controls JTAG polling rate.</b><br>"
+        "Recommended: 10-100 samples/s for normal use.",
         this
     );
-    pollingDescription->setWordWrap(true);
-    pollingDescription->setStyleSheet("color: gray; font-size: 9pt;");
+    samplingDescription->setWordWrap(true);
+    samplingDescription->setStyleSheet("color: gray; font-size: 9pt;");
 
-    pollingLayout->addRow("Interval:", pollingIntervalCombo);
-    pollingLayout->addRow("", pollingDescription);
+    samplingLayout->addRow("Samples/Second:", samplesPerSecondSpin);
+    samplingLayout->addRow("", samplingDescription);
 
-    mainLayout->addWidget(pollingGroup);
+    mainLayout->addWidget(samplingGroup);
+
+    // === UI RENDERING GROUP ===
+    QGroupBox *renderGroup = new QGroupBox("UI Rendering", this);
+    QFormLayout *renderLayout = new QFormLayout(renderGroup);
+
+    // Waveform FPS
+    waveformFPSSpin = new QSpinBox(this);
+    waveformFPSSpin->setRange(1, 120);
+    waveformFPSSpin->setValue(30);
+    waveformFPSSpin->setSuffix(" FPS");
+    waveformFPSSpin->setToolTip(
+        "Waveform redraw rate\n"
+        "All data is captured, only rendering throttled"
+    );
+
+    QLabel *waveDescription = new QLabel(
+        "Redraw rate (all data captured).",
+        this
+    );
+    waveDescription->setStyleSheet("color: gray; font-size: 9pt;");
+    renderLayout->addRow("Waveform FPS:", waveformFPSSpin);
+    renderLayout->addRow("", waveDescription);
+
+    // ChipVisualizer FPS
+    chipVisFPSSpin = new QSpinBox(this);
+    chipVisFPSSpin->setRange(1, 120);
+    chipVisFPSSpin->setValue(10);
+    chipVisFPSSpin->setSuffix(" FPS");
+    chipVisFPSSpin->setToolTip(
+        "Chip visualization redraw rate\n"
+        "All pin changes captured, only rendering throttled"
+    );
+
+    QLabel *chipDescription = new QLabel(
+        "Redraw rate (all changes captured).",
+        this
+    );
+    chipDescription->setStyleSheet("color: gray; font-size: 9pt;");
+    renderLayout->addRow("Chip Visualizer FPS:", chipVisFPSSpin);
+    renderLayout->addRow("", chipDescription);
+
+    mainLayout->addWidget(renderGroup);
 
     // === SAMPLE DECIMATION GROUP ===
     QGroupBox *decimationGroup = new QGroupBox("Sample Decimation", this);
@@ -82,34 +127,16 @@ void SettingsDialog::setupUI()
 
     mainLayout->addWidget(decimationGroup);
 
-    // === SAMPLING FREQUENCY GROUP ===
-    QGroupBox *samplingGroup = new QGroupBox("Sampling Frequency", this);
-    QFormLayout *samplingLayout = new QFormLayout(samplingGroup);
-
-    samplesPerSecondCombo = new QComboBox(this);
-    samplesPerSecondCombo->addItem("1 samples/s", 1);
-    samplesPerSecondCombo->addItem("5 samples/s", 5);
-    samplesPerSecondCombo->addItem("10 samples/s (Recommended)", 10);
-    samplesPerSecondCombo->addItem("50 samples/s", 50);
-    samplesPerSecondCombo->addItem("100 samples/s", 100);
-    samplesPerSecondCombo->addItem("500 samples/s", 500);
-    samplesPerSecondCombo->addItem("1000 samples/s (CRITICAL MAX)", 1000);
-    samplesPerSecondCombo->setCurrentIndex(2);  // Default: 10 samples/s
-
-    QLabel *samplingDescription = new QLabel(
-        "How many times per second the probe updates.\n"
-        "• Higher values = more frequent updates, more CPU usage\n"
-        "• Lower values = less frequent, reduced load\n"
-        "• MAX 1000 samples/s is critical limit",
+    // === INFO LABEL ===
+    QLabel *infoLabel = new QLabel(
+        "<b>Note:</b><br>"
+        "• <b>Samples/Second</b>: Controls JTAG polling (CPU intensive)<br>"
+        "• <b>FPS settings</b>: Only affect rendering, all data is captured",
         this
     );
-    samplingDescription->setWordWrap(true);
-    samplingDescription->setStyleSheet("color: gray; font-size: 9pt;");
-
-    samplingLayout->addRow("Frequency:", samplesPerSecondCombo);
-    samplingLayout->addRow("", samplingDescription);
-
-    mainLayout->addWidget(samplingGroup);
+    infoLabel->setWordWrap(true);
+    infoLabel->setStyleSheet("QLabel { background-color: #f0f0f0; padding: 8px; border-radius: 4px; }");
+    mainLayout->addWidget(infoLabel);
 
     // === DIALOG BUTTONS ===
     buttonBox = new QDialogButtonBox(
@@ -121,12 +148,8 @@ void SettingsDialog::setupUI()
     mainLayout->addWidget(buttonBox);
 
     // === CONNECTIONS ===
-    connect(pollingIntervalCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &SettingsDialog::onPollingIntervalIndexChanged);
     connect(sampleDecimationSlider, &QSlider::valueChanged,
             this, &SettingsDialog::onSampleDecimationValueChanged);
-    connect(samplesPerSecondCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &SettingsDialog::onSamplesPerSecondIndexChanged);
     connect(applyButton, &QPushButton::clicked,
             this, &SettingsDialog::onApplyClicked);
     connect(buttonBox, &QDialogButtonBox::accepted,
@@ -147,17 +170,24 @@ int SettingsDialog::sampleDecimation() const
     return m_sampleDecimation;
 }
 
+int SettingsDialog::samplesPerSecond() const
+{
+    return m_samplesPerSecond;
+}
+
+int SettingsDialog::waveformFPS() const
+{
+    return m_waveformFPS;
+}
+
+int SettingsDialog::chipVisFPS() const
+{
+    return m_chipVisFPS;
+}
+
 void SettingsDialog::setPollingInterval(int ms)
 {
     m_pollingInterval = ms;
-
-    // Find corresponding index in combobox
-    for (int i = 0; i < pollingIntervalCombo->count(); i++) {
-        if (pollingIntervalCombo->itemData(i).toInt() == ms) {
-            pollingIntervalCombo->setCurrentIndex(i);
-            break;
-        }
-    }
 }
 
 void SettingsDialog::setSampleDecimation(int decimation)
@@ -167,9 +197,27 @@ void SettingsDialog::setSampleDecimation(int decimation)
     updateDecimationLabel();
 }
 
+void SettingsDialog::setSamplesPerSecond(int samplesPerSec)
+{
+    m_samplesPerSecond = samplesPerSec;
+    samplesPerSecondSpin->setValue(samplesPerSec);
+}
+
+void SettingsDialog::setWaveformFPS(int fps)
+{
+    m_waveformFPS = fps;
+    waveformFPSSpin->setValue(fps);
+}
+
+void SettingsDialog::setChipVisFPS(int fps)
+{
+    m_chipVisFPS = fps;
+    chipVisFPSSpin->setValue(fps);
+}
+
 void SettingsDialog::onPollingIntervalIndexChanged(int index)
 {
-    m_pollingInterval = pollingIntervalCombo->itemData(index).toInt();
+    // Legacy function - not used anymore
 }
 
 void SettingsDialog::onSampleDecimationValueChanged(int value)
@@ -187,40 +235,31 @@ void SettingsDialog::updateDecimationLabel()
     }
 }
 
-int SettingsDialog::samplesPerSecond() const
-{
-    return m_samplesPerSecond;
-}
-
-void SettingsDialog::setSamplesPerSecond(int samplesPerSec)
-{
-    m_samplesPerSecond = samplesPerSec;
-    for (int i = 0; i < samplesPerSecondCombo->count(); ++i) {
-        if (samplesPerSecondCombo->itemData(i).toInt() == samplesPerSec) {
-            samplesPerSecondCombo->setCurrentIndex(i);
-            break;
-        }
-    }
-}
-
-void SettingsDialog::onSamplesPerSecondIndexChanged(int index)
-{
-    m_samplesPerSecond = samplesPerSecondCombo->itemData(index).toInt();
-}
-
 void SettingsDialog::onApplyClicked()
 {
+    // Read current values from spinboxes
+    m_samplesPerSecond = samplesPerSecondSpin->value();
+    m_waveformFPS = waveformFPSSpin->value();
+    m_chipVisFPS = chipVisFPSSpin->value();
+
     // Emit signals without closing dialog
-    emit pollingIntervalChanged(m_pollingInterval);
     emit sampleDecimationChanged(m_sampleDecimation);
     emit samplesPerSecondChanged(m_samplesPerSecond);
+    emit waveformFPSChanged(m_waveformFPS);
+    emit chipVisFPSChanged(m_chipVisFPS);
 }
 
 void SettingsDialog::onAccepted()
 {
+    // Read current values from spinboxes
+    m_samplesPerSecond = samplesPerSecondSpin->value();
+    m_waveformFPS = waveformFPSSpin->value();
+    m_chipVisFPS = chipVisFPSSpin->value();
+
     // Emit signals and close dialog
-    emit pollingIntervalChanged(m_pollingInterval);
     emit sampleDecimationChanged(m_sampleDecimation);
     emit samplesPerSecondChanged(m_samplesPerSecond);
+    emit waveformFPSChanged(m_waveformFPS);
+    emit chipVisFPSChanged(m_chipVisFPS);
     accept();
 }
