@@ -132,8 +132,8 @@ void PinGraphicsItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* o
     // Borde: naranja si seleccionado, negro si no
     QPen pen;
     if (m_highlighted) {
-        pen.setColor(QColor(255, 128, 0));  // Naranja
-        pen.setWidth(3);
+        pen.setColor(QColor(57,255,20)); // Naranja
+        pen.setWidth(8);
     } else {
         pen.setColor(Qt::black);
         pen.setWidth(1);
@@ -155,7 +155,30 @@ void PinGraphicsItem::hoverEnterEvent(QGraphicsSceneHoverEvent* event) {
     Q_UNUSED(event);
     m_hovered = true;
     update();
-    QString tooltip = QString("%1: %2").arg(m_name).arg(m_level ? "HIGH" : "LOW");
+
+    // Use m_visualState instead of m_level (which is never updated)
+    QString stateStr;
+    switch (m_visualState) {
+        case VisualPinState::LOW:
+            stateStr = "LOW";
+            break;
+        case VisualPinState::HIGH:
+            stateStr = "HIGH";
+            break;
+        case VisualPinState::OSCILLATING:
+            stateStr = "HIGH-Z";
+            break;
+        case VisualPinState::UNKNOWN:
+            stateStr = "UNKNOWN";
+            break;
+        case VisualPinState::LINKAGE:
+            stateStr = "LINKAGE";
+            break;
+        default:
+            stateStr = "UNKNOWN";
+    }
+
+    QString tooltip = QString("%1: %2").arg(m_name).arg(stateStr);
     setToolTip(tooltip);
 }
 

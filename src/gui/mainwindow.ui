@@ -45,7 +45,7 @@
      <x>0</x>
      <y>0</y>
      <width>1200</width>
-     <height>22</height>
+     <height>26</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">
@@ -173,7 +173,7 @@
     </size>
    </property>
    <property name="toolButtonStyle">
-    <enum>Qt::ToolButtonIconOnly</enum>
+    <enum>Qt::ToolButtonStyle::ToolButtonIconOnly</enum>
    </property>
    <property name="floatable">
     <bool>false</bool>
@@ -205,7 +205,7 @@
     </size>
    </property>
    <property name="features">
-    <set>QDockWidget::DockWidgetClosable|QDockWidget::DockWidgetMovable</set>
+    <set>QDockWidget::DockWidgetFeature::DockWidgetClosable|QDockWidget::DockWidgetFeature::DockWidgetMovable</set>
    </property>
    <property name="windowTitle">
     <string>Pins</string>
@@ -259,7 +259,7 @@ QHeaderView::section {
 }</string>
        </property>
        <property name="selectionBehavior">
-        <enum>QAbstractItemView::SelectRows</enum>
+        <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
        </property>
        <property name="sortingEnabled">
         <bool>false</bool>
@@ -326,7 +326,7 @@ QHeaderView::section {
     </size>
    </property>
    <property name="features">
-    <set>QDockWidget::DockWidgetClosable|QDockWidget::DockWidgetMovable</set>
+    <set>QDockWidget::DockWidgetFeature::DockWidgetClosable|QDockWidget::DockWidgetFeature::DockWidgetMovable</set>
    </property>
    <property name="windowTitle">
     <string>Control Pins</string>
@@ -373,7 +373,7 @@ QHeaderView::section {
 }</string>
        </property>
        <property name="selectionBehavior">
-        <enum>QAbstractItemView::SelectRows</enum>
+        <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
        </property>
        <property name="sortingEnabled">
         <bool>false</bool>
@@ -422,7 +422,7 @@ QHeaderView::section {
     </size>
    </property>
    <property name="features">
-    <set>QDockWidget::DockWidgetClosable|QDockWidget::DockWidgetMovable</set>
+    <set>QDockWidget::DockWidgetFeature::DockWidgetClosable|QDockWidget::DockWidgetFeature::DockWidgetMovable</set>
    </property>
    <property name="windowTitle">
     <string>Waveform</string>
@@ -471,7 +471,7 @@ QToolButton {
         </size>
        </property>
        <property name="toolButtonStyle">
-        <enum>Qt::ToolButtonTextOnly</enum>
+        <enum>Qt::ToolButtonStyle::ToolButtonTextOnly</enum>
        </property>
        <property name="floatable">
         <bool>false</bool>
@@ -488,7 +488,7 @@ QToolButton {
      <item>
       <widget class="QSplitter" name="splitter">
        <property name="orientation">
-        <enum>Qt::Horizontal</enum>
+        <enum>Qt::Orientation::Horizontal</enum>
        </property>
        <widget class="QTableWidget" name="tableWidgetWaveform">
         <property name="minimumSize">
@@ -502,6 +502,11 @@ QToolButton {
           <width>400</width>
           <height>16777215</height>
          </size>
+        </property>
+        <property name="font">
+         <font>
+          <family>Courier New</family>
+         </font>
         </property>
         <property name="styleSheet">
          <string notr="true">QTableWidget {
@@ -517,13 +522,8 @@ QHeaderView::section {
     font-family: 'Courier New';
 }</string>
         </property>
-        <property name="font">
-         <font>
-          <family>Courier New</family>
-         </font>
-        </property>
         <property name="selectionBehavior">
-         <enum>QAbstractItemView::SelectRows</enum>
+         <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
         </property>
         <attribute name="horizontalHeaderStretchLastSection">
          <bool>false</bool>
@@ -596,7 +596,7 @@ QHeaderView::section {
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>Watch</string>
+    <string>Control Pins</string>
    </property>
    <property name="toolTip">
     <string>Show/Hide Watch Window</string>
@@ -633,33 +633,33 @@ QHeaderView::section {
    <property name="text">
     <string>Run</string>
    </property>
-   <property name="shortcut">
-    <string>F5</string>
-   </property>
    <property name="toolTip">
     <string>Run</string>
+   </property>
+   <property name="shortcut">
+    <string>F5</string>
    </property>
   </action>
   <action name="actionReset">
    <property name="text">
     <string>Reset</string>
    </property>
-   <property name="shortcut">
-    <string>F8</string>
-   </property>
    <property name="toolTip">
     <string>Reset device</string>
+   </property>
+   <property name="shortcut">
+    <string>F8</string>
    </property>
   </action>
   <action name="actionJTAG_Reset">
    <property name="text">
     <string>JTAG Reset</string>
    </property>
-   <property name="shortcut">
-    <string>Ctrl+F8</string>
-   </property>
    <property name="toolTip">
     <string>Reset JTAG state machine (5x1 + 1x0)</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+F8</string>
    </property>
   </action>
   <action name="actionInstruction">
@@ -672,24 +672,28 @@ QHeaderView::section {
   </action>
   <action name="actionWaveZoomIn">
    <property name="text">
-    <string>+</string>
+    <string>Zoom In (+)</string>
+   </property>
+   <property name="toolTip">
+    <string>Zoom in waveform view (2x)</string>
    </property>
    <property name="font">
     <font>
-     <pointsize>14</pointsize>
-     <weight>75</weight>
+     <pointsize>10</pointsize>
      <bold>true</bold>
     </font>
    </property>
   </action>
   <action name="actionWaveZoomOut">
    <property name="text">
-    <string>-</string>
+    <string>Zoom Out (-)</string>
+   </property>
+   <property name="toolTip">
+    <string>Zoom out waveform view (0.5x)</string>
    </property>
    <property name="font">
     <font>
-     <pointsize>14</pointsize>
-     <weight>75</weight>
+     <pointsize>10</pointsize>
      <bold>true</bold>
     </font>
    </property>

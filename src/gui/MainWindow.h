@@ -30,6 +30,26 @@ namespace Ui {
 }
 QT_END_NAMESPACE
 
+// ============================================================
+// WAVEFORM CURSOR TYPES (antes de la clase MainWindow)
+// ============================================================
+enum class ActiveCursor {
+    NONE = 0,
+    C1 = 1,
+    C2 = 2
+};
+
+struct CursorPosition {
+    bool defined = false;
+    double timePosition = 0.0;
+};
+
+struct TransitionCache {
+    std::vector<double> timestamps;
+    bool dirty = true;
+};
+// ============================================================
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -126,6 +146,9 @@ private slots:
     // Control Panel slot
     void onControlPanelPinChanged(QString pinName, JTAG::PinLevel level);
 
+    // Waveform cursor selector slot
+    void onCursorSelectorChanged(int index);
+
 private:
     Ui::MainWindow *ui;
     
@@ -147,6 +170,7 @@ private:
 
     // Toolbar widgets
     QComboBox *zoomComboBox;
+    QComboBox *m_cursorSelector;  // Selector de cursores del waveform
 
     // JTAG Mode selector widgets
     class QRadioButton *radioSample;
@@ -227,6 +251,24 @@ private:
     std::map<QString, VisualPinState> m_pendingChipVisUpdates;
     // ================================================================
 
+    // ============================================================
+    // WAVEFORM CURSORS (tipos definidos fuera de la clase)
+    // ============================================================
+    ActiveCursor m_activeCursor = ActiveCursor::NONE;
+    CursorPosition m_cursor1Pos;
+    CursorPosition m_cursor2Pos;
+
+    // Cursor graphics items
+    QGraphicsLineItem* m_cursor1Line = nullptr;
+    QGraphicsLineItem* m_cursor2Line = nullptr;
+    QLabel* m_lblC1Info = nullptr;    // Tiempo Cursor 1
+    QLabel* m_lblC2Info = nullptr;    // Tiempo Cursor 2
+    QLabel* m_lblDeltaInfo = nullptr; // Tiempo Diferencia
+
+    // Transition cache for efficient navigation
+    TransitionCache m_transitionCache;
+    // ============================================================
+
     QLabel* waveformZoomLabel;  // Zoom indicator in toolbar
 
     // Helper methods
@@ -246,6 +288,13 @@ private:
     void redrawWaveform();
     void enableControlsAfterConnection(bool enable);
     void renderChipVisualization();
+
+    // Waveform cursor helpers
+    void updateTransitionCache();
+    double findNextTransition(double currentTime, bool forward);
+    void moveCursorByTransition(bool forward);
+    void renderCursors();
+    bool eventFilter(QObject* obj, QEvent* event) override;
 
     // Pin name resolution helper
     QString resolveRealPinName(const QString& displayName) const;

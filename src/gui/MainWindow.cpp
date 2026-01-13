@@ -44,6 +44,7 @@
 #include <QHBoxLayout>
 #include <QSplitter>
 #include <QScrollBar>
+#include <QKeyEvent>
 #include <QDialog>
 #include <QListWidget>
 #include <QDialogButtonBox>
@@ -54,6 +55,7 @@
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <algorithm>
 
 // Backend Headers
 #include "../controller/ScanController.h"
@@ -109,6 +111,8 @@ MainWindow::MainWindow(QWidget *parent)
     , isAutoScrollEnabled(true)
     , m_waveformRenderTimer(nullptr)
     , m_waveformNeedsRedraw(false)
+    , m_cursorSelector(nullptr)
+    , m_activeCursor(ActiveCursor::NONE)
 {
     // Cargar diseño UI desde mainwindow.ui
     ui->setupUi(this);
@@ -330,6 +334,10 @@ void MainWindow::setupGraphicsViews()
     ui->graphicsViewWaveform->setScene(waveformScene);
     ui->graphicsViewWaveform->setRenderHint(QPainter::Antialiasing);
 
+    // Install event filter para capturar teclas para navegación de cursores
+    ui->graphicsViewWaveform->installEventFilter(this);
+    ui->graphicsViewWaveform->setFocusPolicy(Qt::StrongFocus);
+
     // Sincronizar scroll vertical entre nombres y waveform
     connect(ui->graphicsViewWaveform->verticalScrollBar(), &QScrollBar::valueChanged,
             [this](int value) {
@@ -396,7 +404,61 @@ void MainWindow::setupGraphicsViews()
     waveformLayout->setContentsMargins(0, 0, 0, 0);
     waveformLayout->setSpacing(0);
 
-    // CRITICAL: Add with stretch factors: timeline=0 (fixed), waveform=1 (expanding)
+    // ============ CURSOR SELECTOR TOOLBAR ============
+    QWidget* cursorToolbar = new QWidget();
+    QHBoxLayout* cursorToolbarLayout = new QHBoxLayout(cursorToolbar);
+    cursorToolbarLayout->setContentsMargins(5, 2, 5, 2);
+    cursorToolbarLayout->setSpacing(5);
+
+    // Create cursor selector combo box
+    m_cursorSelector = new QComboBox(this);
+    m_cursorSelector->addItem("No Cursor", static_cast<int>(ActiveCursor::NONE));
+    m_cursorSelector->addItem("Cursor 1 (C1)", static_cast<int>(ActiveCursor::C1));
+    m_cursorSelector->addItem("Cursor 2 (C2)", static_cast<int>(ActiveCursor::C2));
+    m_cursorSelector->setToolTip("Select active cursor (use LEFT/RIGHT arrows to navigate transitions)");
+    m_cursorSelector->setCurrentIndex(0);
+    m_cursorSelector->setFixedWidth(150);
+
+    m_cursorSelector->setFocusPolicy(Qt::NoFocus); 
+
+    cursorToolbarLayout->addWidget(new QLabel("Cursor:"));
+    cursorToolbarLayout->addWidget(m_cursorSelector);
+    QFrame* line1 = new QFrame; line1->setFrameShape(QFrame::VLine); line1->setFrameShadow(QFrame::Sunken);
+    cursorToolbarLayout->addWidget(line1);
+
+    // 2. Etiqueta C1 (Naranja)
+    m_lblC1Info = new QLabel("C1: --", this);
+    m_lblC1Info->setStyleSheet("QLabel { font-weight: bold; color: #E67E00; min-width: 80px; }");
+    cursorToolbarLayout->addWidget(m_lblC1Info);
+
+    // Barra separadora
+    QFrame* line2 = new QFrame; line2->setFrameShape(QFrame::VLine); line2->setFrameShadow(QFrame::Sunken);
+    cursorToolbarLayout->addWidget(line2);
+
+    // 3. Etiqueta C2 (Verde)
+    m_lblC2Info = new QLabel("C2: --", this);
+    m_lblC2Info->setStyleSheet("QLabel { font-weight: bold; color: #008000; min-width: 80px; }");
+    cursorToolbarLayout->addWidget(m_lblC2Info);
+
+    // Barra separadora
+    QFrame* line3 = new QFrame; line3->setFrameShape(QFrame::VLine); line3->setFrameShadow(QFrame::Sunken);
+    cursorToolbarLayout->addWidget(line3);
+
+    // 4. Etiqueta Delta (Azul)
+    m_lblDeltaInfo = new QLabel("ΔT: --", this);
+    m_lblDeltaInfo->setStyleSheet("QLabel { font-weight: bold; color: #00008B; min-width: 100px; }");
+    cursorToolbarLayout->addWidget(m_lblDeltaInfo);
+    cursorToolbarLayout->addStretch();
+
+    cursorToolbar->setFixedHeight(30);
+    cursorToolbar->setStyleSheet("background-color: rgb(240, 240, 240); border-bottom: 1px solid rgb(200, 200, 200);");
+
+    connect(m_cursorSelector, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onCursorSelectorChanged);
+    // =================================================
+
+    // CRITICAL: Add with stretch factors: toolbar=0 (fixed), timeline=0 (fixed), waveform=1 (expanding)
+    waveformLayout->addWidget(cursorToolbar, 0);    // No stretch - fixed height
     waveformLayout->addWidget(timelineRow, 0);      // No stretch - fixed height
     waveformLayout->addWidget(waveformRow, 1);      // Stretch=1 - takes all remaining space
 
@@ -592,16 +654,16 @@ void MainWindow::setupToolbar()
     radioSample->setEnabled(false);
     radioSampleSingleShot->setEnabled(false);
     radioExtest->setEnabled(false);
-    radioIntest->setEnabled(false);
-    radioBypass->setEnabled(false);
+    radioIntest->setEnabled(false);  // Will be enabled after connection
+    radioBypass->setEnabled(false);  // Will be enabled after connection
     btnSetAllSafe->setEnabled(false);
     btnSetAll1->setEnabled(false);
     btnSetAllZ->setEnabled(false);
     btnSetAll0->setEnabled(false);
 
-    // Permanently disable BYPASS and INTEST modes (not implemented)
-    radioBypass->setToolTip("BYPASS mode - Not available");
-    radioIntest->setToolTip("INTEST mode - Not available");
+    // Set tooltips for BYPASS and INTEST modes
+    radioBypass->setToolTip("BYPASS mode - Transparent 1-bit DR, no BSR operations");
+    radioIntest->setToolTip("INTEST mode - Test internal logic via boundary scan");
 }
 
 void MainWindow::setupConnections()
@@ -700,9 +762,8 @@ void MainWindow::enableControlsAfterConnection(bool enable)
     radioSample->setEnabled(enable && isDeviceInitialized);
     radioSampleSingleShot->setEnabled(enable && isDeviceInitialized);
     radioExtest->setEnabled(enable && isDeviceInitialized);
-    // radioIntest and radioBypass permanently disabled (not implemented)
-    radioIntest->setEnabled(false);
-    radioBypass->setEnabled(false);
+    radioIntest->setEnabled(enable && isDeviceInitialized);
+    radioBypass->setEnabled(enable && isDeviceInitialized);
     btnSetAllSafe->setEnabled(enable && isDeviceInitialized);
     btnSetAll1->setEnabled(enable && isDeviceInitialized);
     btnSetAllZ->setEnabled(enable && isDeviceInitialized);
@@ -1284,6 +1345,45 @@ void MainWindow::onReset()
         }
         currentJTAGMode = JTAGMode::SAMPLE;
 
+        // Limpiar waveform data
+        waveformBuffer.clear();          // Borrar todas las muestras capturadas
+        waveformSignals.clear();         // Borrar lista de señales agregadas
+        captureTimer.invalidate();       // Reset del timer de captura
+        m_waveformNeedsRedraw = true;    // Marcar para redibujado
+
+        // Limpiar buffers pendientes
+        m_pendingChipVisUpdates.clear();
+        m_chipVisNeedsRedraw = false;
+
+        // Limpiar scenes
+        if (waveformScene) {
+            waveformScene->clear();
+        }
+        //EVITA excepciones al poner un cursor
+        
+        m_cursor1Line = nullptr;
+        m_cursor2Line = nullptr;
+        
+        /*
+        m_cursor1Label = nullptr;
+        m_cursor2Label = nullptr;
+        m_deltaLabel = nullptr;*/
+
+        // También es vital resetear la lógica de los cursores
+        m_cursor1Pos.defined = false;
+        m_cursor2Pos.defined = false;
+        m_activeCursor = ActiveCursor::NONE;
+        if (waveformNamesScene) {
+            waveformNamesScene->clear();
+        }
+        if (timelineScene) {
+            timelineScene->clear();
+        }
+
+        // Limpiar contadores de transiciones (Watch panel)
+        transitionCounters.clear();
+        previousLevels.clear();
+
         updateStatusBar("Reset: BSDL unloaded, adapter still connected");
 
         QMessageBox::information(this, "Reset Complete",
@@ -1392,12 +1492,58 @@ void MainWindow::onDeviceBSDLFile()
         tr("Open BSDL File"), "", tr("BSDL Files (*.bsd *.bsdl);;All Files (*)"));
 
     if (!fileName.isEmpty() && scanController) {
-        // Convertir QString a std::filesystem::path para soporte Unicode completo
-        #ifdef _WIN32
-            std::filesystem::path bsdlPath(fileName.toStdWString());
-        #else
-            std::filesystem::path bsdlPath(fileName.toStdString());
-        #endif
+
+        // 1. DESCONECTARSE DEL MUNDO EXTERIOR
+        disconnect(scanController.get(), &JTAG::ScanController::pinsDataReady,
+            this, &MainWindow::onPinsDataReady);
+
+        if (isCapturing) {
+            scanController->stopPolling();
+            isCapturing = false;
+            ui->actionRun->setText("Run");
+            QThread::msleep(10);
+        }
+
+        // 2. LIMPIEZA DE UI
+        ui->tableWidgetPins->setRowCount(0);
+
+        waveformSignals.clear();
+        waveformBuffer.clear();
+        if (m_waveformRenderTimer && m_waveformRenderTimer->isActive()) {
+            m_waveformRenderTimer->stop();
+        }
+        m_waveformNeedsRedraw = false;
+        redrawWaveform();
+
+        if (controlPanel) {
+            controlPanel->removeAllPins();
+        }
+
+        // ====================================================================
+        // [FIX ZOMBIS] EL SECRETO ESTÁ AQUÍ
+        // ====================================================================
+        if (chipVisualizer) {
+            // A. Borrar lógicamente los items de la escena
+            chipVisualizer->scene()->clear();
+
+            // B. (Opcional) Si tu clase ChipVisualizer tiene un método para resetear 
+            // su puntero interno al modelo, úsalo. Si no, el paso C es vital.
+            // chipVisualizer->setModel(nullptr); 
+
+            // C. ¡CRUCIAL! Obligar a Qt a procesar la eliminación AHORA MISMO.
+            // Esto ejecuta los destructores de los items gráficos pendientes
+            // mientras el DeviceModel todavía existe y es seguro acceder a él.
+            QCoreApplication::processEvents();
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        }
+        // ====================================================================
+
+        // 3. AHORA SÍ: CARGAR NUEVO BSDL (Destruye el modelo antiguo)
+#ifdef _WIN32
+        std::filesystem::path bsdlPath(fileName.toStdWString());
+#else
+        std::filesystem::path bsdlPath(fileName.toStdString());
+#endif
 
         if (scanController->loadBSDL(bsdlPath)) {
             updateStatusBar("BSDL loaded: " + fileName);
@@ -1405,23 +1551,28 @@ void MainWindow::onDeviceBSDLFile()
             if (scanController->initializeDevice()) {
                 isDeviceInitialized = true;
 
+                // Reconectar todo
                 updatePinsTable();
                 renderChipVisualization();
 
-                // NUEVO: Auto-entrar en SAMPLE y empezar polling
+                connect(scanController.get(), &JTAG::ScanController::pinsDataReady,
+                    this, &MainWindow::onPinsDataReady);
+
                 if (scanController->enterSAMPLE()) {
                     isCapturing = true;
                     captureTimer.start();
                     scanController->startPolling();
-                    updateStatusBar("SAMPLE mode active - reading pins continuously");
+                    updateStatusBar("SAMPLE mode active");
                     ui->actionRun->setText("Stop");
                 }
-
                 enableControlsAfterConnection(true);
             }
-        } else {
-            QMessageBox::critical(this, "Error",
-                "Failed to load or parse BSDL file");
+        }
+        else {
+            // Recuperar conexión en caso de fallo (opcional)
+            connect(scanController.get(), &JTAG::ScanController::pinsDataReady,
+                this, &MainWindow::onPinsDataReady);
+            QMessageBox::critical(this, "Error", "Failed to load BSDL file");
         }
     }
 }
@@ -1983,6 +2134,8 @@ void MainWindow::onWaveformClear()
 {
     // Clear waveform data but keep signals
     waveformScene->clear();
+    m_cursor1Line = nullptr;
+    m_cursor2Line = nullptr;
     
     // Recreate grid
     QPen gridPen(QColor(220, 220, 220));
@@ -2187,6 +2340,11 @@ void MainWindow::onWaveGoto()
 void MainWindow::updatePinsTable()
 {
     if (!scanController) return;
+
+    if (scanController->getDeviceModel() == nullptr) {
+        ui->tableWidgetPins->setRowCount(0); // Asegurar tabla vacía
+        return;
+    }
 
     const bool wasBlocked = ui->tableWidgetPins->signalsBlocked();
     ui->tableWidgetPins->blockSignals(true);
@@ -2475,6 +2633,9 @@ void MainWindow::captureWaveformSample(const std::vector<JTAG::PinLevel>& curren
         m_waveformRenderTimer->start();
     }
     // ================================================
+
+    // Invalidar cache de transiciones (hay nuevos datos)
+    m_transitionCache.dirty = true;
 }
 
 void MainWindow::redrawWaveform()
@@ -2493,6 +2654,14 @@ void MainWindow::redrawWaveform()
     if (waveformSignals.empty()) {
         // Limpiar escenas y dejar todo en blanco
         waveformScene->clear();
+
+        m_cursor1Line = nullptr;
+        m_cursor2Line = nullptr;
+/*
+        m_cursor1Label = nullptr;
+        m_cursor2Label = nullptr;
+        m_deltaLabel = nullptr;
+        */
         waveformNamesScene->clear();
         timelineScene->clear();
         isRedrawing = false;
@@ -2500,6 +2669,16 @@ void MainWindow::redrawWaveform()
     }
 
     waveformScene->clear();
+
+    m_cursor1Line = nullptr;
+    m_cursor2Line = nullptr;
+
+/*
+    m_cursor1Label = nullptr;
+    m_cursor2Label = nullptr;
+    m_deltaLabel = nullptr;
+    */
+
     waveformNamesScene->clear();
     timelineScene->clear();
 
@@ -2748,12 +2927,17 @@ void MainWindow::redrawWaveform()
             samples.size()
         );
 
-        // Calcular decimación si hay demasiadas muestras visibles
+        // Calcular decimación basada en resolución de pantalla (máximo 1 muestra por píxel)
         size_t visibleCount = endIdx - startIdx;
         size_t step = 1;
-        const size_t MAX_VISIBLE_SAMPLES = 5000;
-        if (visibleCount > MAX_VISIBLE_SAMPLES) {
-            step = visibleCount / MAX_VISIBLE_SAMPLES;
+
+        // Obtener ancho del viewport en píxeles
+        int viewportWidthPixels = ui->graphicsViewWaveform->viewport()->width();
+
+        // Diezmar para renderizar máximo 1 muestra por píxel horizontal
+        if (visibleCount > static_cast<size_t>(viewportWidthPixels)) {
+            step = visibleCount / viewportWidthPixels;
+            if (step < 1) step = 1;
         }
 
         // Dibujar solo muestras en el rango visible (con decimación si es necesario)
@@ -2806,6 +2990,9 @@ void MainWindow::redrawWaveform()
         timelineView->horizontalScrollBar()->setValue(scrollPos);
     }
 
+    // Renderizar cursores del waveform
+    renderCursors();
+
     isRedrawing = false;
 }
 
@@ -2834,67 +3021,50 @@ void MainWindow::updateStatusBar(const QString &message)
 
 void MainWindow::onPinsDataReady(std::shared_ptr<const std::vector<JTAG::PinLevel>> pins)
 {
-    // FASE 2: Dereferencia shared_ptr UNA VEZ para obtener referencia al vector
-    // NO HACE COPIA - solo accede al objeto compartido
-    const std::vector<JTAG::PinLevel>& pinsRef = *pins;
+    // [FIX CRÍTICO] ESCUDO CONTRA CRASHES
+    // Verificar punteros y estado antes de hacer nada.
+    if (!scanController) return;
 
-    // Este slot se ejecuta en GUI thread (thread-safe vía Qt signals)
-    // Reemplaza el código que estaba en onPollTimer()
-
-    qDebug() << "[MainWindow::onPinsDataReady] Called with" << pinsRef.size() << "pins (shared_ptr)"
-             << "isCapturing:" << isCapturing;
-
-    // Check if no target is detected (all pull-ups)
-    static bool warningShown = false;
-    if (scanController && scanController->isNoTargetDetected()) {
-        if (!warningShown) {
-            statusBar()->showMessage("⚠ WARNING: No target detected - TDO showing pull-ups (all 1s)", 0);
-            warningShown = true;
-        }
-    } else {
-        if (warningShown) {
-            warningShown = false;
-            statusBar()->clearMessage();
-        }
-    }
-
-    // Mostrar en barra de estado que recibimos datos (DEBUG)
-    static int updateCount = 0;
-    updateCount++;
-    if (!warningShown) { // Only show update count if no warning
-        statusBar()->showMessage(QString("Updates received: %1 (pins: %2)")
-                                .arg(updateCount).arg(pinsRef.size()), 100);
-    }
-
-    if (!scanController || !isCapturing) {
-        qDebug() << "[MainWindow::onPinsDataReady] SKIPPED - not capturing";
+    // Si el modelo se está borrando o es null, salir inmediatamente.
+    // Esto es lo que causa tu excepción "dangling reference".
+    if (scanController->getDeviceModel() == nullptr) {
         return;
     }
 
-    // Sample decimation: Only apply in continuous SAMPLE mode
-    // SAMPLE 1x (single shot) always updates regardless of decimation
+    // FASE 2: Dereferencia shared_ptr UNA VEZ
+    const std::vector<JTAG::PinLevel>& pinsRef = *pins;
+
+    // --- El resto de tu función sigue exactamente igual ---
+
+    // Debug info (opcional, puedes mantener tu código original aquí)
+    // ...
+
+    // Check if no target is detected logic...
+    // ...
+
+    if (!isCapturing) {
+        return;
+    }
+
+    // Sample decimation logic...
     if (currentJTAGMode == JTAGMode::SAMPLE) {
         sampleCounter++;
         if (sampleCounter < currentSampleDecimation) {
-            return;  // Skip this sample update
+            return;
         }
-        sampleCounter = 0;  // Reset for next cycle
+        sampleCounter = 0;
     }
 
     // 1. Actualizar tabla de pines
     updatePinsTable();
 
-    // 2. Actualizar Control Panel (reemplaza updateWatchTable)
+    // 2. Actualizar Control Panel
     updateControlPanel(pinsRef);
 
-    // 3. Capturar muestra para waveform (SOLO SI ES VISIBLE)
-    // ===== OPTIMIZACIÓN: Pasar vector BSR completo para acceso directo =====
-    // En lugar de que waveform llame a getPin() por cada señal,
-    // le pasamos el vector completo y hace acceso[index] directo
+    // 3. Capturar muestra para waveform
     if (ui->dockWaveform->isVisible()) {
-        captureWaveformSample(pinsRef);  // ← Pasar vector BSR completo
+        captureWaveformSample(pinsRef);
     }
-    // ====================================================================
 }
 
 void MainWindow::onScanError(QString message)
@@ -3251,4 +3421,216 @@ void MainWindow::loadWindowState()
 
     // Restore splitter states if any
     // Add more settings as needed
+}
+
+// ============================================================================
+// WAVEFORM CURSORS IMPLEMENTATION
+// ============================================================================
+
+void MainWindow::onCursorSelectorChanged(int index)
+{
+    m_activeCursor = static_cast<ActiveCursor>(m_cursorSelector->currentData().toInt());
+
+    // Inicializar posición del cursor en viewport visible si no está definido
+    if (m_activeCursor == ActiveCursor::C1 && !m_cursor1Pos.defined) {
+        QScrollBar* hScrollBar = ui->graphicsViewWaveform->horizontalScrollBar();
+        int scrollPos = hScrollBar ? hScrollBar->value() : 0;
+        int viewportWidth = ui->graphicsViewWaveform->viewport()->width();
+        double PIXELS_PER_SECOND = 100.0 / waveformTimebase;
+
+        m_cursor1Pos.timePosition = (scrollPos + viewportWidth * 0.25) / PIXELS_PER_SECOND;
+        m_cursor1Pos.defined = true;
+    } else if (m_activeCursor == ActiveCursor::C2 && !m_cursor2Pos.defined) {
+        QScrollBar* hScrollBar = ui->graphicsViewWaveform->horizontalScrollBar();
+        int scrollPos = hScrollBar ? hScrollBar->value() : 0;
+        int viewportWidth = ui->graphicsViewWaveform->viewport()->width();
+        double PIXELS_PER_SECOND = 100.0 / waveformTimebase;
+
+        m_cursor2Pos.timePosition = (scrollPos + viewportWidth * 0.75) / PIXELS_PER_SECOND;
+        m_cursor2Pos.defined = true;
+    }
+
+    m_waveformNeedsRedraw = true;
+
+    QString statusMsg = "No cursor";
+    if (m_activeCursor == ActiveCursor::C1) statusMsg = "Cursor 1 active";
+    else if (m_activeCursor == ActiveCursor::C2) statusMsg = "Cursor 2 active";
+    updateStatusBar(statusMsg);
+}
+
+void MainWindow::updateTransitionCache()
+{
+    if (!m_transitionCache.dirty) return;
+
+    m_transitionCache.timestamps.clear();
+
+    // Recopilar todas las transiciones de todas las señales
+    for (const auto& [name, samples] : waveformBuffer) {
+        if (samples.size() < 2) continue;
+
+        JTAG::PinLevel prevLevel = samples[0].level;
+        for (size_t i = 1; i < samples.size(); ++i) {
+            if (samples[i].level != prevLevel) {
+                m_transitionCache.timestamps.push_back(samples[i].timestamp);
+                prevLevel = samples[i].level;
+            }
+        }
+    }
+
+    // Ordenar y eliminar duplicados
+    std::sort(m_transitionCache.timestamps.begin(),
+              m_transitionCache.timestamps.end());
+    auto last = std::unique(m_transitionCache.timestamps.begin(),
+                           m_transitionCache.timestamps.end());
+    m_transitionCache.timestamps.erase(last, m_transitionCache.timestamps.end());
+
+    m_transitionCache.dirty = false;
+}
+
+double MainWindow::findNextTransition(double currentTime, bool forward)
+{
+    updateTransitionCache();
+
+    if (m_transitionCache.timestamps.empty()) return currentTime;
+
+    if (forward) {
+        // Búsqueda binaria de primera transición > currentTime
+        auto it = std::upper_bound(m_transitionCache.timestamps.begin(),
+                                   m_transitionCache.timestamps.end(),
+                                   currentTime);
+        if (it != m_transitionCache.timestamps.end()) {
+            return *it;
+        }
+        return currentTime;  // No hay más transiciones
+    } else {
+        // Búsqueda binaria de última transición < currentTime
+        auto it = std::lower_bound(m_transitionCache.timestamps.begin(),
+                                   m_transitionCache.timestamps.end(),
+                                   currentTime);
+        if (it != m_transitionCache.timestamps.begin()) {
+            --it;
+            return *it;
+        }
+        return currentTime;  // No hay transiciones previas
+    }
+}
+
+void MainWindow::moveCursorByTransition(bool forward)
+{
+    // 1. Identificar qué cursor movemos
+    CursorPosition* cursor = nullptr;
+    if (m_activeCursor == ActiveCursor::C1) cursor = &m_cursor1Pos;
+    else if (m_activeCursor == ActiveCursor::C2) cursor = &m_cursor2Pos;
+    else return; // Ninguno seleccionado
+
+    if (!cursor->defined) return;
+
+    // 2. Buscar el siguiente flanco (transición)
+    double newTime = findNextTransition(cursor->timePosition, forward);
+
+    // Si ha habido cambio de posición
+    if (newTime != cursor->timePosition) {
+
+        // Actualizar datos
+        cursor->timePosition = newTime;
+        m_waveformNeedsRedraw = true; // Para redibujar las líneas verticales
+
+        double x = newTime * (100.0 / waveformTimebase); // Conversión Tiempo -> Píxeles
+        ui->graphicsViewWaveform->centerOn(x, 0);        // Centrar cámara
+
+        
+        // Calculamos dónde cae ese tiempo en píxeles (X)
+        // Fórmula: X = Tiempo * (100 píxeles / unidad de base de tiempo)
+        const double PIXELS_PER_SECOND = 100.0 / waveformTimebase;
+        double targetX = newTime * PIXELS_PER_SECOND;
+
+        // centerOn toma una coordenada de la ESCENA y mueve el scroll
+        // para que ese punto quede en el CENTRO del visor.
+        ui->graphicsViewWaveform->centerOn(targetX, 0);
+
+        // Debug opcional en barra de estado
+        // updateStatusBar(QString("Jumped to %1 ms").arg(newTime * 1000.0));
+    }
+}
+
+void MainWindow::renderCursors()
+{
+    // Limpiar líneas viejas
+    if (m_cursor1Line) { waveformScene->removeItem(m_cursor1Line); delete m_cursor1Line; m_cursor1Line = nullptr; }
+    if (m_cursor2Line) { waveformScene->removeItem(m_cursor2Line); delete m_cursor2Line; m_cursor2Line = nullptr; }
+
+    // Factor de escala
+    const double PIXELS_PER_SECOND = 100.0 / waveformTimebase;
+    const int maxY = 10000; // Suficiente altura para cubrir todo
+
+    // --- ACTUALIZAR CURSOR 1 ---
+    if (m_cursor1Pos.defined) {
+        int x1 = static_cast<int>(m_cursor1Pos.timePosition * PIXELS_PER_SECOND);
+
+        // Dibujar línea
+        QPen pen(QColor(255, 140, 0)); // Naranja
+        pen.setWidth(m_activeCursor == ActiveCursor::C1 ? 3 : 1);
+        pen.setStyle(Qt::DashLine);
+        m_cursor1Line = waveformScene->addLine(x1, -100, x1, maxY, pen);
+
+        // Actualizar Etiqueta UI
+        m_lblC1Info->setText(QString("C1: %1 ms").arg(m_cursor1Pos.timePosition * 1000.0, 0, 'f', 4));
+    }
+    else {
+        m_lblC1Info->setText("C1: --");
+    }
+
+    // --- ACTUALIZAR CURSOR 2 ---
+    if (m_cursor2Pos.defined) {
+        int x2 = static_cast<int>(m_cursor2Pos.timePosition * PIXELS_PER_SECOND);
+
+        // Dibujar línea
+        QPen pen(QColor(0, 200, 0)); // Verde
+        pen.setWidth(m_activeCursor == ActiveCursor::C2 ? 3 : 1);
+        pen.setStyle(Qt::DashLine);
+        m_cursor2Line = waveformScene->addLine(x2, -100, x2, maxY, pen);
+
+        // Actualizar Etiqueta UI
+        m_lblC2Info->setText(QString("C2: %1 ms").arg(m_cursor2Pos.timePosition * 1000.0, 0, 'f', 4));
+    }
+    else {
+        m_lblC2Info->setText("C2: --");
+    }
+
+    // --- ACTUALIZAR DELTA ---
+    if (m_cursor1Pos.defined && m_cursor2Pos.defined) {
+        double delta = std::abs(m_cursor2Pos.timePosition - m_cursor1Pos.timePosition);
+
+        // Cálculo de frecuencia
+        QString freqText;
+       
+
+        m_lblDeltaInfo->setText(QString("ΔT: %1 ms%2")
+            .arg(delta * 1000.0, 0, 'f', 4)
+            .arg(freqText));
+    }
+    else {
+        m_lblDeltaInfo->setText("ΔT: --");
+    }
+}
+
+bool MainWindow::eventFilter(QObject* obj, QEvent* event)
+{
+    if (obj == ui->graphicsViewWaveform && event->type() == QEvent::KeyPress) {
+        QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
+
+        // Solo procesar si hay un cursor activo
+        if (m_activeCursor == ActiveCursor::NONE) {
+            return QMainWindow::eventFilter(obj, event);
+        }
+
+        // LEFT/RIGHT: mover cursor activo a transiciones
+        if (keyEvent->key() == Qt::Key_Left || keyEvent->key() == Qt::Key_Right) {
+            bool forward = (keyEvent->key() == Qt::Key_Right);
+            moveCursorByTransition(forward);
+            return true;  // Consumir evento
+        }
+    }
+
+    return QMainWindow::eventFilter(obj, event);
 }
