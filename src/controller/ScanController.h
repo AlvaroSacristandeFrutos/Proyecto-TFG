@@ -86,6 +86,7 @@ namespace JTAG {
 
         // NUEVO: Exponer DeviceModel para visualización
         const DeviceModel* getDeviceModel() const { return deviceModel.get(); }
+        DeviceModel* getDeviceModel() { return deviceModel.get(); }  // Versión no-const para modificación
 
         // Target detection - check if BSR shows no target (all 0xFF)
         bool isNoTargetDetected() const;

@@ -260,4 +260,33 @@ namespace JTAG {
         return pinInfo ? pinInfo->pinNumber : "";
     }
 
+    bool DeviceModel::renamePinAlias(const std::string& oldName, const std::string& newName) {
+        // Verificar que el nombre nuevo no esté vacío
+        if (newName.empty()) {
+            return false;
+        }
+
+        // Verificar que el nuevo nombre no exista ya
+        if (pinIndexCache.find(newName) != pinIndexCache.end()) {
+            return false;  // El nuevo nombre ya existe
+        }
+
+        // Buscar el pin en el cache
+        auto it = pinIndexCache.find(oldName);
+        if (it == pinIndexCache.end()) {
+            return false;  // Pin no encontrado
+        }
+
+        size_t index = it->second;
+
+        // Cambiar el nombre en el PinInfo
+        pins[index].name = newName;
+
+        // Actualizar el cache: eliminar entrada vieja y añadir nueva
+        pinIndexCache.erase(oldName);
+        pinIndexCache[newName] = index;
+
+        return true;
+    }
+
 } 

@@ -156,30 +156,8 @@ void PinGraphicsItem::hoverEnterEvent(QGraphicsSceneHoverEvent* event) {
     m_hovered = true;
     update();
 
-    // Use m_visualState instead of m_level (which is never updated)
-    QString stateStr;
-    switch (m_visualState) {
-        case VisualPinState::LOW:
-            stateStr = "LOW";
-            break;
-        case VisualPinState::HIGH:
-            stateStr = "HIGH";
-            break;
-        case VisualPinState::OSCILLATING:
-            stateStr = "HIGH-Z";
-            break;
-        case VisualPinState::UNKNOWN:
-            stateStr = "UNKNOWN";
-            break;
-        case VisualPinState::LINKAGE:
-            stateStr = "LINKAGE";
-            break;
-        default:
-            stateStr = "UNKNOWN";
-    }
-
-    QString tooltip = QString("%1: %2").arg(m_name).arg(stateStr);
-    setToolTip(tooltip);
+    // El tooltip ya está configurado como "Nombre (Número)" en renderFromDeviceModel()
+    // No lo sobrescribimos aquí para mantener el formato correcto
 }
 
 void PinGraphicsItem::hoverLeaveEvent(QGraphicsSceneHoverEvent* event) {

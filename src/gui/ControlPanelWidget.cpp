@@ -222,3 +222,16 @@ int ControlPanelWidget::findPinRow(const std::string& pinName) const
     }
     return -1;
 }
+
+void ControlPanelWidget::renamePinIfExists(const QString& oldName, const QString& newName)
+{
+    int row = findPinRow(oldName.toStdString());
+    if (row != -1) {
+        // Actualizar el nombre en la tabla
+        QTableWidgetItem* nameItem = table->item(row, 0);
+        if (nameItem) {
+            nameItem->setText(newName);
+            qDebug() << "[ControlPanel] Pin renamed:" << oldName << "->" << newName;
+        }
+    }
+}

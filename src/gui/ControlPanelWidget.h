@@ -24,6 +24,7 @@ public:
     void addPin(const std::string& pinName, const std::string& pinNumber);
     void removePin(const std::string& pinName);
     void removeAllPins();
+    void renamePinIfExists(const QString& oldName, const QString& newName);
 
     // Actualización de valores (desde backend)
     void updatePinValue(const std::string& pinName, JTAG::PinLevel level);

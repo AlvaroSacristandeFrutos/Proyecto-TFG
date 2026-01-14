@@ -46,6 +46,9 @@ namespace JTAG {
         std::string getPinType(const std::string& pinName) const;
         std::string getPinNumber(const std::string& pinName) const;
 
+        // Renombrar pin (alias)
+        bool renamePinAlias(const std::string& oldName, const std::string& newName);
+
         uint32_t getInstruction(const std::string& instructionName) const;
         const std::map<std::string, uint32_t>& getAllInstructions() const { return instructions; }
 

@@ -290,7 +290,7 @@ namespace JTAG {
         // Necesario en EXTEST/INTEST para evitar latencia de 1 ciclo
         if (operationMode == OperationMode::EXTEST || operationMode == OperationMode::INTEST || operationMode == OperationMode::BYPASS) {
             runTestCycles(1);  // 10 ciclos de reloj @ 1 MHz = 10 μs
-            //Se puede poner 1 ciclo de reloj y es suficiente, pero es por asegurar. Con 0 sí que falla
+            //Se puede poner 1 ciclo de reloj lo que supone menos de un micro segundo es suficiente, pero es por asegurar. Con 0 sí que falla
         }
 
         // DEBUG: Mostrar qué se RECIBIÓ (TDO)

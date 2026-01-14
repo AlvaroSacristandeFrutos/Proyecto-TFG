@@ -13,12 +13,12 @@ if(NOT CMAKE_BUILD_TYPE)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "RelWithDebInfo" "MinSizeRel")
 endif()
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
- 
+
 # Configuración Qt Automática
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON) 
 set(CMAKE_AUTOUIC ON)
-
+ 
 # Buscar Qt6
 find_package(Qt6 COMPONENTS Widgets Core Gui SerialPort REQUIRED)
 

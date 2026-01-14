@@ -51,6 +51,11 @@
 #include <QMetaType>
 #include <QSettings>
 #include <QMenu>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QFile>
+
 
 // Standard Library
 #include <iostream>
@@ -231,6 +236,14 @@ void MainWindow::initializeUI()
 {
     resize(1200, 800);
     updateStatusBar("Ready");
+
+    // Deshabilitar acciones del menú Pins por defecto (solo activas en EXTEST/INTEST)
+    ui->actionSet_to_0->setEnabled(false);
+    ui->actionSet_to_1->setEnabled(false);
+    ui->actionSet_to_Z->setEnabled(false);
+    ui->actionSet_Bus_Value->setEnabled(false);
+    ui->actionSet_Bus_to_All_Z->setEnabled(false);
+    ui->actionSet_All_Device_Pins_to_BSDL_Safe->setEnabled(false);
 }
 
 /**
@@ -317,7 +330,7 @@ void MainWindow::setupGraphicsViews()
     timelineView = new QGraphicsView(this);
     timelineView->setScene(timelineScene);
     timelineView->setRenderHint(QPainter::Antialiasing);
-    timelineView->setFixedHeight(50);
+    timelineView->setFixedHeight(30);
     timelineView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     timelineView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     timelineView->setStyleSheet("background-color: rgb(245, 245, 245); border-bottom: 1px solid rgb(200, 200, 200);");
@@ -400,7 +413,7 @@ void MainWindow::setupGraphicsViews()
     timelineRowLayout->addWidget(timelineView);
 
     // CRITICAL: Set fixed height for timeline row (no expansion)
-    timelineRow->setFixedHeight(50);
+    timelineRow->setFixedHeight(30);
     timelineRow->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     // Create container widget to hold timeline row and waveform row
@@ -649,6 +662,12 @@ void MainWindow::setupToolbar()
     btnSetAllZ->setToolTip("Set all output pins to High-Z");
     btnSetAll0->setToolTip("Set all output pins to LOW");
 
+    // Deshabilitar botones por defecto (solo activos en EXTEST/INTEST)
+    btnSetAllSafe->setEnabled(false);
+    btnSetAll1->setEnabled(false);
+    btnSetAllZ->setEnabled(false);
+    btnSetAll0->setEnabled(false);
+
     // Add to toolbar
     ui->toolBar->addWidget(btnSetAllSafe);
     ui->toolBar->addWidget(btnSetAll1);
@@ -681,6 +700,8 @@ void MainWindow::setupConnections()
 {
     // File menu connections
     connect(ui->actionNew_Project_Wizard, &QAction::triggered, this, &MainWindow::onNewProjectWizard);
+    connect(ui->actionOpen_Project, &QAction::triggered, this, &MainWindow::onOpenProject);
+    connect(ui->actionSave_Project, &QAction::triggered, this, &MainWindow::onSaveProject);
     connect(ui->actionExit, &QAction::triggered, this, &MainWindow::onExit);
     
     // View menu connections
@@ -709,9 +730,18 @@ void MainWindow::setupConnections()
     
     // Watch menu connections
     connect(ui->actionWatch_Show, &QAction::triggered, this, &MainWindow::onWatchShow);
-    
+
     // Waveform menu connections
     connect(ui->actionWaveform_Close, &QAction::triggered, this, &MainWindow::onWaveformClose);
+
+    // Conectar señales de visibilidad de los docks para actualizar texto de acciones
+    connect(ui->dockWatch, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        ui->actionWatch_Show->setText(visible ? "Close Control Pins" : "Show Control Pins");
+    });
+
+    connect(ui->dockWaveform, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        ui->actionWaveform_Close->setText(visible ? "Close Waveform" : "Show Waveform");
+    });
     connect(ui->actionWaveform_Add_Signal, &QAction::triggered, this, &MainWindow::onWaveformAddSignal);
     connect(ui->actionWaveform_Remove, &QAction::triggered, this, &MainWindow::onWaveformRemove);
     connect(ui->actionWaveform_Remove_All, &QAction::triggered, this, &MainWindow::onWaveformRemoveAll);
@@ -1411,50 +1441,36 @@ void MainWindow::onJTAGReset()
         return;
     }
 
-    // Confirmar acción
-    QMessageBox::StandardButton reply = QMessageBox::question(
-        this,
-        "JTAG Reset",
-        "This will reset the JTAG state machine by sending:\n"
-        "- 5 TMS=1 clocks (to Test-Logic-Reset)\n"
-        "- 1 TMS=0 clock (to Run-Test/Idle)\n\n"
-        "Use this if the TAP controller is in an unknown state.\n\n"
-        "Do you want to continue?",
-        QMessageBox::Yes | QMessageBox::No
-    );
-
-    if (reply == QMessageBox::Yes) {
-        // 1. Detener worker si está corriendo
-        if (isCapturing) {
-            scanController->stopPolling();
-            isCapturing = false;
-            ui->actionRun->setText("Run");
-            qDebug() << "[MainWindow] Worker stopped for JTAG Reset";
-        }
-
-        // 2. Ejecutar reset JTAG (secuencia TMS: 5×1 + 1×0)
-        // Esto deja el TAP en Run-Test/Idle sin instrucción cargada
-        if (!scanController->resetJTAGStateMachine()) {
-            updateStatusBar("JTAG Reset failed - check adapter connection");
-            qDebug() << "[MainWindow] JTAG Reset FAILED";
-            return;
-        }
-
-        // 3. Desmarcar todos los radio buttons para indicar que no hay modo activo
-        if (jtagModeButtonGroup) {
-            jtagModeButtonGroup->setExclusive(false);
-            if (radioSample) radioSample->setChecked(false);
-            if (radioSampleSingleShot) radioSampleSingleShot->setChecked(false);
-            if (radioExtest) radioExtest->setChecked(false);
-            if (radioIntest) radioIntest->setChecked(false);
-            if (radioBypass) radioBypass->setChecked(false);
-            jtagModeButtonGroup->setExclusive(true);
-        }
-
-        // 4. Estado final: TAP en IDLE, worker parado, sin instrucción cargada
-        updateStatusBar("JTAG TAP reset to RUN_TEST_IDLE - Select mode to continue");
-        qDebug() << "[MainWindow] JTAG Reset complete - TAP in IDLE, no instruction loaded";
+    // 1. Detener worker si está corriendo
+    if (isCapturing) {
+        scanController->stopPolling();
+        isCapturing = false;
+        ui->actionRun->setText("Run");
+        qDebug() << "[MainWindow] Worker stopped for JTAG Reset";
     }
+
+    // 2. Ejecutar reset JTAG (secuencia TMS: 5×1 + 1×0)
+    // Esto deja el TAP en Run-Test/Idle sin instrucción cargada
+    if (!scanController->resetJTAGStateMachine()) {
+        updateStatusBar("JTAG Reset failed - check adapter connection");
+        qDebug() << "[MainWindow] JTAG Reset FAILED";
+        return;
+    }
+
+    // 3. Desmarcar todos los radio buttons para indicar que no hay modo activo
+    if (jtagModeButtonGroup) {
+        jtagModeButtonGroup->setExclusive(false);
+        if (radioSample) radioSample->setChecked(false);
+        if (radioSampleSingleShot) radioSampleSingleShot->setChecked(false);
+        if (radioExtest) radioExtest->setChecked(false);
+        if (radioIntest) radioIntest->setChecked(false);
+        if (radioBypass) radioBypass->setChecked(false);
+        jtagModeButtonGroup->setExclusive(true);
+    }
+
+    // 4. Estado final: TAP en IDLE, worker parado, sin instrucción cargada
+    updateStatusBar("JTAG TAP reset to RUN_TEST_IDLE - Select mode to continue");
+    qDebug() << "[MainWindow] JTAG Reset complete - TAP in IDLE, no instruction loaded";
 }
 
 /**
@@ -1558,6 +1574,7 @@ void MainWindow::onDeviceBSDLFile()
 
         if (scanController->loadBSDL(bsdlPath)) {
             updateStatusBar("BSDL loaded: " + fileName);
+            currentBSDLPath = fileName;  // Guardar ruta del BSDL para el proyecto
 
             if (scanController->initializeDevice()) {
                 isDeviceInitialized = true;
@@ -1577,6 +1594,11 @@ void MainWindow::onDeviceBSDLFile()
                     ui->actionRun->setText("Stop");
                 }
                 enableControlsAfterConnection(true);
+
+                // Forzar actualización de estado de controles según modo inicial (SAMPLE)
+                // Esto asegura que los botones "All to" y acciones del menú Pins
+                // estén desactivados correctamente al cargar el BSDL por primera vez
+                onJTAGModeChanged(0);  // 0 = SAMPLE mode
             }
         }
         else {
@@ -1668,16 +1690,76 @@ void MainWindow::onSearchPinsButton()
 
 void MainWindow::onPinTableItemChanged(QTableWidgetItem* item)
 {
-    // Handle column 0 (Name) changes
+    // Handle column 0 (Name) changes - Renaming
     if (item->column() == 0) {
-        QString newDisplayName = item->text();
-        QString realName = item->data(Qt::UserRole).toString();
+        QString newDisplayName = item->text().trimmed();
+        QString oldRealName = item->data(Qt::UserRole).toString();
 
-        qDebug() << "[onPinTableItemChanged] Pin display name changed to:" << newDisplayName
-                 << "(real name:" << realName << ")";
+        // Si el nombre no cambió realmente, no hacer nada
+        if (oldRealName == newDisplayName || newDisplayName.isEmpty()) {
+            return;
+        }
 
-        // El cambio de nombre ya está hecho en el item
-        // resolveRealPinName() usará el UserRole automáticamente
+        qDebug() << "[onPinTableItemChanged] Renaming pin:" << oldRealName << "->" << newDisplayName;
+
+        // Verificar que tenemos un DeviceModel
+        if (!scanController || !scanController->getDeviceModel()) {
+            QMessageBox::warning(this, "Cannot Rename", "No device model loaded");
+            item->setText(oldRealName); // Revertir cambio
+            return;
+        }
+
+        // Intentar renombrar en el DeviceModel
+        if (scanController->getDeviceModel()->renamePinAlias(
+                oldRealName.toStdString(),
+                newDisplayName.toStdString())) {
+
+            // Actualizar UserRole para que coincida con el nuevo nombre
+            item->setData(Qt::UserRole, newDisplayName);
+
+            // Propagar a waveformSignals
+            for (auto& sig : waveformSignals) {
+                if (sig.name == oldRealName.toStdString()) {
+                    sig.name = newDisplayName.toStdString();
+                    qDebug() << "[onPinTableItemChanged] Updated waveform signal name";
+                }
+            }
+
+            // Propagar a waveformBuffer (renombrar key del map)
+            auto it = waveformBuffer.find(oldRealName.toStdString());
+            if (it != waveformBuffer.end()) {
+                auto data = std::move(it->second);
+                waveformBuffer.erase(it);
+                waveformBuffer[newDisplayName.toStdString()] = std::move(data);
+                qDebug() << "[onPinTableItemChanged] Updated waveform buffer key";
+            }
+
+            // Propagar a control panel
+            if (controlPanel) {
+                controlPanel->renamePinIfExists(oldRealName, newDisplayName);
+            }
+
+            // Propagar a chip visualizer
+            if (chipVisualizer) {
+                chipVisualizer->updatePinName(oldRealName, newDisplayName);
+            }
+
+            // Invalidar cache de transiciones (los nombres en el cache pueden cambiar)
+            m_transitionCache.dirty = true;
+
+            // Redibujar waveform
+            m_waveformNeedsRedraw = true;
+
+            updateStatusBar(QString("Pin renamed: %1 → %2").arg(oldRealName).arg(newDisplayName));
+            qDebug() << "[onPinTableItemChanged] Pin rename complete";
+        } else {
+            // Renombrado falló (posiblemente nombre duplicado)
+            QMessageBox::warning(this, "Rename Failed",
+                QString("Cannot rename pin to '%1'. Name may already exist or be invalid.")
+                .arg(newDisplayName));
+            item->setText(oldRealName); // Revertir cambio
+        }
+
         return;
     }
 
@@ -1748,7 +1830,8 @@ void MainWindow::onPinTableSelectionChanged()
 
 void MainWindow::onEditPinNamesAndBuses()
 {
-    QMessageBox::information(this, "Edit Pin Names", "Edit Pin Names and Buses - To be implemented");
+    // Renaming is done directly in the pins table by double-clicking
+    // No dialog needed
 }
 
 void MainWindow::onSetTo0()
@@ -1964,8 +2047,10 @@ void MainWindow::onSetAllDevicePinsToBSDLSafe()
 
 void MainWindow::onWatchShow()
 {
-    ui->dockWatch->setVisible(true);
-    ui->actionWatch->setChecked(true);
+    // Toggle visibility del Control Panel
+    bool isVisible = ui->dockWatch->isVisible();
+    ui->dockWatch->setVisible(!isVisible);
+    ui->actionWatch->setChecked(!isVisible);
 }
 
 // ============================================================================
@@ -1974,13 +2059,13 @@ void MainWindow::onWatchShow()
 
 void MainWindow::onWaveformClose()
 {
-    ui->dockWaveform->setVisible(false);
-    ui->actionWaveform->setChecked(false);
+    // Toggle visibility del Waveform
+    bool isVisible = ui->dockWaveform->isVisible();
+    ui->dockWaveform->setVisible(!isVisible);
+    ui->actionWaveform->setChecked(!isVisible);
 
-    // ===== OPTIMIZACIÓN: Pausar render timer cuando waveform oculto =====
-    // Ahorra CPU al no redibujar gráficos invisibles
-    m_waveformRenderTimer->stop();
-    // ====================================================================
+    // Nota: El timer sigue corriendo aunque el waveform esté oculto
+    // para que el tiempo y la captura de datos continúen
 }
 
 void MainWindow::onWaveformAddSignal()
@@ -2716,9 +2801,9 @@ void MainWindow::redrawWaveform()
     timelineScene->clear();
 
     // FIXED SIGNAL_HEIGHT - Las señales NO se estiran al agrandar ventana
-    const int SIGNAL_HEIGHT = 40;      // Vertical space per signal (FIXED)
-    const int HIGH_Y_OFFSET = 10;      // Y offset for HIGH level
-    const int LOW_Y_OFFSET = 30;       // Y offset for LOW level
+    const int SIGNAL_HEIGHT = 30;      // Vertical space per signal (FIXED) - Reducido para más densidad
+    const int HIGH_Y_OFFSET = 7;       // Y offset for HIGH level
+    const int LOW_Y_OFFSET = 23;       // Y offset for LOW level
     const double PIXELS_PER_SECOND = 100.0 / waveformTimebase; // Zoom factor
 
     // W7: Helper para calcular Y según nivel (maneja HIGH_Z)
@@ -2889,7 +2974,7 @@ void MainWindow::redrawWaveform()
         }
 
         QGraphicsTextItem *timeText = timelineScene->addText(timeLabel);
-        timeText->setPos(x - 25, 5);
+        timeText->setPos(x - 25, 2);
         timeText->setDefaultTextColor(QColor(40, 40, 40));
         timeText->setFont(QFont("Arial", 9, QFont::Bold));
     }
@@ -2908,9 +2993,9 @@ void MainWindow::redrawWaveform()
 
         // Dibujar nombre en escena separada (waveformNamesScene)
         QGraphicsTextItem *label = waveformNamesScene->addText(QString::fromStdString(pinName));
-        label->setPos(10, yBase + 10);
+        label->setPos(10, yBase + 7);
         label->setDefaultTextColor(Qt::black);
-        label->setFont(QFont("Arial", 10, QFont::Bold));
+        label->setFont(QFont("Arial", 9, QFont::Bold));
 
         // Dibujar separador horizontal en escena de nombres
         waveformNamesScene->addLine(0, yBase + SIGNAL_HEIGHT, 150, yBase + SIGNAL_HEIGHT,
@@ -2974,23 +3059,35 @@ void MainWindow::redrawWaveform()
         }
 
         // Dibujar solo muestras en el rango visible (con decimación si es necesario)
-        for (size_t i = startIdx + 1; i < endIdx; i += step) {
-            double x1 = samples[i-1].timestamp * PIXELS_PER_SECOND;
-            double x2 = samples[i].timestamp * PIXELS_PER_SECOND;
+        if (step < 1) step = 1; // Seguridad
 
-            int y1 = getLevelY(samples[i-1].level, yBase);
-            int y2 = getLevelY(samples[i].level, yBase);
+        // CORRECCIÓN: Empezamos en startIdx + step para poder mirar atrás correctamente
+        for (size_t i = startIdx + step; i < endIdx; i += step) {
+
+            // CORRECCIÓN CRÍTICA: Usamos (i - step) en lugar de (i - 1)
+            // Esto conecta el punto anterior del salto con el actual, eliminando los huecos.
+            const auto& samplePrev = samples[i - step];
+            const auto& sampleCurr = samples[i];
+
+            double x1 = samplePrev.timestamp * PIXELS_PER_SECOND;
+            double x2 = sampleCurr.timestamp * PIXELS_PER_SECOND;
+
+            int y1 = getLevelY(samplePrev.level, yBase);
+            int y2 = getLevelY(sampleCurr.level, yBase);
 
             // W7: Dibujar con estilo diferente para HIGH_Z
-            if (samples[i-1].level == JTAG::PinLevel::HIGH_Z) {
+            if (samplePrev.level == JTAG::PinLevel::HIGH_Z) {
                 QPen zPen(Qt::gray, 2, Qt::DashLine);
                 waveformScene->addLine(x1, y1, x2, y1, zPen);
-            } else {
-                // Horizontal line (hold previous level)
+            }
+            else {
+                // Línea horizontal (hold previous level)
                 waveformScene->addLine(x1, y1, x2, y1, signalPen);
             }
 
-            // Vertical line (transition)
+            // Línea vertical (transición)
+            // Nota: En decimación alta, esto puede dibujar transiciones falsas si nos saltamos pulsos,
+            // pero es necesario para mantener la continuidad visual de la línea.
             if (y1 != y2) {
                 waveformScene->addLine(x2, y1, x2, y2, signalPen);
             }
@@ -3241,6 +3338,20 @@ void MainWindow::onJTAGModeChanged(int modeId)
     } else {
         updateStatusBar(QString("Mode changed to %1").arg(modeName));
     }
+
+    // Habilitar/deshabilitar botones de toolbar "All to" según modo de edición
+    if (btnSetAllSafe) btnSetAllSafe->setEnabled(enableControlPanel);
+    if (btnSetAll1) btnSetAll1->setEnabled(enableControlPanel);
+    if (btnSetAllZ) btnSetAllZ->setEnabled(enableControlPanel);
+    if (btnSetAll0) btnSetAll0->setEnabled(enableControlPanel);
+
+    // Habilitar/deshabilitar acciones del menú Pins según modo de edición
+    ui->actionSet_to_0->setEnabled(enableControlPanel);
+    ui->actionSet_to_1->setEnabled(enableControlPanel);
+    ui->actionSet_to_Z->setEnabled(enableControlPanel);
+    ui->actionSet_Bus_Value->setEnabled(enableControlPanel);
+    ui->actionSet_Bus_to_All_Z->setEnabled(enableControlPanel);
+    ui->actionSet_All_Device_Pins_to_BSDL_Safe->setEnabled(enableControlPanel);
 
     updatePinsTable(); // Refrescar para habilitar/deshabilitar edición
 }
@@ -3710,7 +3821,7 @@ void MainWindow::onWaveformContextMenu(const QPoint &pos)
     QPointF scenePos = waveformNamesView->mapToScene(pos);
 
     // Calcular qué señal fue clickeada basándose en la posición Y
-    const int SIGNAL_HEIGHT = 40;  // Debe coincidir con el valor en redrawWaveform()
+    const int SIGNAL_HEIGHT = 30;  // Debe coincidir con el valor en redrawWaveform()
     int row = static_cast<int>(scenePos.y()) / SIGNAL_HEIGHT;
 
     // Verificar que el row es válido
@@ -3747,14 +3858,15 @@ void MainWindow::onWaveformContextMenu(const QPoint &pos)
         // Invalidar cache de transiciones (los cursores pueden necesitar recalcular)
         m_transitionCache.dirty = true;
 
-        // Si no quedan señales, detener el timer de renderizado
+        // Si no quedan señales, detener el timer y redibujar síncronamente
         if (waveformSignals.empty()) {
             m_waveformRenderTimer->stop();
             m_waveformNeedsRedraw = false;
+            redrawWaveform();  // Redibujar síncronamente para limpiar pantalla
+        } else {
+            // Si quedan señales, solo marcar para redraw asíncrono
+            m_waveformNeedsRedraw = true;
         }
-
-        // Redibujar waveform
-        m_waveformNeedsRedraw = true;
     });
 
     contextMenu.addAction(removeSignalAction);
@@ -3771,4 +3883,308 @@ void MainWindow::onWaveformContextMenu(const QPoint &pos)
 
     // Mostrar menú en la posición del cursor
     contextMenu.exec(waveformNamesView->mapToGlobal(pos));
+}
+
+// ============================================================================
+// PROJECT MANAGEMENT
+// ============================================================================
+
+// Función auxiliar: Crea una ruta relativa desde el archivo del proyecto hasta el BSDL
+QString MainWindow::makePathRelative(const QString& absolutePath, const QString& basePath) const
+{
+    // Necesitas <QFileInfo> incluido arriba
+    QDir baseDir(QFileInfo(basePath).absolutePath());
+    return baseDir.relativeFilePath(absolutePath);
+}
+
+// Función auxiliar: Reconstruye la ruta absoluta
+QString MainWindow::makePathAbsolute(const QString& relativePath, const QString& basePath) const
+{
+    QDir baseDir(QFileInfo(basePath).absolutePath());
+    return baseDir.cleanPath(baseDir.absoluteFilePath(relativePath));
+}
+
+bool MainWindow::saveProjectToJson(const QString& filePath)
+{
+    QJsonObject project;
+
+    // 1. Versión y Metadatos
+    project["projectVersion"] = "1.0";
+    project["timestamp"] = QDateTime::currentDateTime().toString(Qt::ISODate); // Opcional, requiere <QDateTime>
+
+    // 2. Información del dispositivo y BSDL
+    // Guardamos la ruta relativa para que el proyecto funcione si mueves la carpeta completa
+    if (!currentBSDLPath.isEmpty()) {
+        project["bsdlFile"] = makePathRelative(currentBSDLPath, filePath);
+    }
+    project["deviceName"] = customDeviceName;
+
+    // 3. Configuración del Modo JTAG
+    QString jtagModeStr;
+    switch (currentJTAGMode) {
+    case JTAGMode::SAMPLE: jtagModeStr = "SAMPLE"; break;
+    case JTAGMode::SAMPLE_SINGLE_SHOT: jtagModeStr = "SAMPLE_SINGLE_SHOT"; break;
+    case JTAGMode::EXTEST: jtagModeStr = "EXTEST"; break;
+    case JTAGMode::INTEST: jtagModeStr = "INTEST"; break;
+    case JTAGMode::BYPASS: jtagModeStr = "BYPASS"; break;
+    }
+    project["jtagMode"] = jtagModeStr;
+
+    // 4. Configuración del Waveform
+    QJsonObject waveform;
+    QJsonArray signalsArray;
+
+    // Guardar señales agregadas (WaveformSignalInfo struct)
+    for (const auto& sig : waveformSignals) {
+        signalsArray.append(QString::fromStdString(sig.name));
+    }
+    waveform["signals"] = signalsArray;
+
+    // Parámetros de visualización
+    waveform["timebase"] = waveformTimebase;
+    waveform["autoScrollEnabled"] = isAutoScrollEnabled;
+
+    // Guardar posición del scroll
+    if (ui->graphicsViewWaveform->horizontalScrollBar()) {
+        waveform["scrollPosition"] = ui->graphicsViewWaveform->horizontalScrollBar()->value();
+    }
+
+    // Guardar Cursores
+    QJsonObject cursors;
+    cursors["active"] = static_cast<int>(m_activeCursor);
+    cursors["c1Position"] = m_cursor1Pos.timePosition;
+    cursors["c1Defined"] = m_cursor1Pos.defined;
+    cursors["c2Position"] = m_cursor2Pos.timePosition;
+    cursors["c2Defined"] = m_cursor2Pos.defined;
+    waveform["cursors"] = cursors;
+
+    project["waveform"] = waveform;
+
+    // 5. Configuración de Rendimiento (Settings)
+    QJsonObject settings;
+    settings["pollingInterval"] = currentPollInterval;
+    settings["sampleDecimation"] = currentSampleDecimation;
+    settings["samplesPerSecond"] = currentSamplesPerSecond;
+    settings["waveformFPS"] = currentWaveformFPS;
+    settings["chipVisFPS"] = currentChipVisFPS;
+    project["settings"] = settings;
+
+    // --- GUARDADO EN DISCO ---
+    QJsonDocument doc(project);
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly)) {
+        QMessageBox::critical(this, "Save Error",
+            QString("Could not save project file:\n%1").arg(file.errorString()));
+        return false;
+    }
+
+    file.write(doc.toJson(QJsonDocument::Indented));
+    file.close();
+
+    currentProjectPath = filePath;
+    updateStatusBar(QString("Project saved: %1").arg(QFileInfo(filePath).fileName()));
+    return true;
+}
+
+bool MainWindow::loadProjectFromJson(const QString& filePath)
+{
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        QMessageBox::critical(this, "Load Error",
+            QString("Could not open project file:\n%1").arg(file.errorString()));
+        return false;
+    }
+
+    QByteArray data = file.readAll();
+    file.close();
+
+    QJsonDocument doc = QJsonDocument::fromJson(data);
+    if (doc.isNull() || !doc.isObject()) {
+        QMessageBox::critical(this, "Load Error", "Invalid project file format");
+        return false;
+    }
+
+    // ====================================================================
+    // FASE 0: AISLAMIENTO Y LIMPIEZA (IGUAL QUE EN onDeviceBSDLFile)
+    // ====================================================================
+
+    // 1. !!! DESCONECTAR EL CEREBRO: Evitar que el backend envíe datos mientras cargamos
+    if (scanController) {
+        disconnect(scanController.get(), &JTAG::ScanController::pinsDataReady,
+            this, &MainWindow::onPinsDataReady);
+    }
+
+    // 2. Detener temporizadores de la interfaz (Waveform y Chip)
+    if (m_waveformRenderTimer && m_waveformRenderTimer->isActive()) m_waveformRenderTimer->stop();
+    if (m_chipVisRenderTimer && m_chipVisRenderTimer->isActive()) m_chipVisRenderTimer->stop();
+
+    // 3. Detener captura del backend
+    if (isCapturing && scanController) {
+        scanController->stopPolling();
+        isCapturing = false;
+        ui->actionRun->setText("Run");
+        // Pequeña pausa para asegurar que el thread se detiene
+        QThread::msleep(10);
+    }
+
+    // 4. Limpiar datos visuales
+    ui->tableWidgetPins->setRowCount(0);
+    onWaveformRemoveAll();
+
+    // 5. !!! VACIAR LA PAPELERA: Limpieza profunda de memoria gráfica
+    if (chipVisualizer) {
+        chipVisualizer->scene()->clear();
+
+        // Estas dos líneas son vitales para liberar la RAM de los objetos gráficos viejos
+        QCoreApplication::processEvents();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+    // ====================================================================
+
+    QJsonObject project = doc.object();
+
+    // CARGA DE BSDL
+    QString relativeBSDLPath = project["bsdlFile"].toString();
+    bool bsdlLoaded = false;
+
+    if (!relativeBSDLPath.isEmpty()) {
+        QString absoluteBSDLPath = makePathAbsolute(relativeBSDLPath, filePath);
+
+        if (!QFile::exists(absoluteBSDLPath)) {
+            QMessageBox::warning(this, "BSDL Missing", "BSDL not found: " + absoluteBSDLPath);
+        }
+        else {
+#ifdef _WIN32
+            std::filesystem::path bsdlPath(absoluteBSDLPath.toStdWString());
+#else
+            std::filesystem::path bsdlPath(absoluteBSDLPath.toStdString());
+#endif
+
+            if (scanController && scanController->loadBSDL(bsdlPath)) {
+                currentBSDLPath = absoluteBSDLPath;
+                customDeviceName = project["deviceName"].toString();
+
+                if (scanController->initializeDevice()) {
+                    isDeviceInitialized = true;
+                    // Regenerar tabla limpia
+                    updatePinsTable();
+                    renderChipVisualization();
+                    enableControlsAfterConnection(true);
+
+                    // !!! RECONECTAR EL CEREBRO: Volver a escuchar al backend
+                    connect(scanController.get(), &JTAG::ScanController::pinsDataReady,
+                        this, &MainWindow::onPinsDataReady);
+
+                    bsdlLoaded = true;
+                }
+            }
+        }
+    }
+
+    // RESTAURAR WAVEFORM
+    if (project.contains("waveform")) {
+        QJsonObject waveform = project["waveform"].toObject();
+        waveformTimebase = waveform["timebase"].toDouble(1.0);
+        isAutoScrollEnabled = waveform["autoScrollEnabled"].toBool(true);
+
+        QJsonArray jsonSignals = waveform["signals"].toArray();
+        for (const auto& val : jsonSignals) {
+            QString pinName = val.toString();
+
+            if (scanController && scanController->getDeviceModel()) {
+                auto pinInfo = scanController->getDeviceModel()->getPinInfo(pinName.toStdString());
+                if (pinInfo) {
+                    WaveformSignalInfo sigInfo;
+                    sigInfo.name = pinName.toStdString();
+                    if (pinInfo->inputCell != -1) sigInfo.dataIndex = pinInfo->inputCell;
+                    else if (pinInfo->outputCell != -1) sigInfo.dataIndex = pinInfo->outputCell;
+                    else sigInfo.dataIndex = -1;
+
+                    waveformSignals.push_back(sigInfo);
+                    waveformBuffer[sigInfo.name].clear();
+                }
+            }
+        }
+
+        // Cursores
+        if (waveform.contains("cursors")) {
+            QJsonObject cursors = waveform["cursors"].toObject();
+            m_activeCursor = static_cast<ActiveCursor>(cursors["active"].toInt(0));
+            m_cursor1Pos.timePosition = cursors["c1Position"].toDouble(0.0);
+            m_cursor1Pos.defined = cursors["c1Defined"].toBool(false);
+            m_cursor2Pos.timePosition = cursors["c2Position"].toDouble(0.0);
+            m_cursor2Pos.defined = cursors["c2Defined"].toBool(false);
+
+            if (m_cursorSelector)
+                m_cursorSelector->setCurrentIndex(static_cast<int>(m_activeCursor));
+        }
+
+        // Reactivar visualización de Waveform
+        m_waveformNeedsRedraw = true;
+        if (!waveformSignals.empty()) {
+            redrawWaveform();
+            if (m_waveformRenderTimer && !m_waveformRenderTimer->isActive()) {
+                m_waveformRenderTimer->start();
+            }
+        }
+    }
+
+    // RESTAURAR SETTINGS
+    if (project.contains("settings")) {
+        QJsonObject settings = project["settings"].toObject();
+        currentPollInterval = settings["pollingInterval"].toInt(100);
+        currentSampleDecimation = settings["sampleDecimation"].toInt(1);
+        currentSamplesPerSecond = settings["samplesPerSecond"].toInt(10);
+
+        if (scanController) scanController->setPollInterval(currentPollInterval);
+    }
+
+    // !!! SEGURIDAD FINAL: Si falló la carga del BSDL pero el controller quedó conectado
+    if (!bsdlLoaded && scanController) {
+        // Asegurar que reconectamos la señal para no dejar la app "sorda"
+        connect(scanController.get(), &JTAG::ScanController::pinsDataReady,
+            this, &MainWindow::onPinsDataReady);
+    }
+
+    currentProjectPath = filePath;
+    updateStatusBar(QString("Project loaded: %1").arg(QFileInfo(filePath).fileName()));
+    return true;
+}
+void MainWindow::onSaveProject()
+{
+    // Si ya tenemos un proyecto abierto, guardar en la misma ubicación
+    QString filePath = currentProjectPath;
+
+    // Si no hay proyecto o es la primera vez, preguntar ubicación
+    if (filePath.isEmpty()) {
+        filePath = QFileDialog::getSaveFileName(this,
+            tr("Save Project"), "",
+            tr("JtagScannerQt_UVa Project Files (*.JTAGjproj);;All Files (*)"));
+
+        if (filePath.isEmpty()) {
+            return;  // Usuario canceló
+        }
+
+        // Añadir extensión si no la tiene
+        if (!filePath.endsWith(".JTAGjproj", Qt::CaseInsensitive)) {
+            filePath += ".JTAGjproj";
+        }
+    }
+
+    // Llamar a la función lógica que implementamos antes
+    saveProjectToJson(filePath);
+}
+
+void MainWindow::onOpenProject()
+{
+    QString filePath = QFileDialog::getOpenFileName(this,
+        tr("Open Project"), "",
+        tr("JtagScannerQt_UVa Project Files (*.JTAGjproj);;All Files (*)"));
+
+    if (filePath.isEmpty()) {
+        return;  // Usuario canceló
+    }
+
+    // Llamar a la función lógica que implementamos antes
+    loadProjectFromJson(filePath);
 }

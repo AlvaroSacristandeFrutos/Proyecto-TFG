@@ -61,6 +61,8 @@ public:
 private slots:
     // File menu actions
     void onNewProjectWizard();
+    void onSaveProject();
+    void onOpenProject();
     void onExit();
 
     // View menu actions
@@ -201,6 +203,10 @@ private:
     // Device configuration from wizard
     QString customDeviceName;
 
+    // Project management
+    QString currentProjectPath;  // Ruta del archivo .json del proyecto
+    QString currentBSDLPath;     // Ruta del archivo BSDL cargado
+
     // JTAG Mode state
     enum class JTAGMode { SAMPLE, SAMPLE_SINGLE_SHOT, EXTEST, INTEST, BYPASS };
     JTAGMode currentJTAGMode;
@@ -284,6 +290,12 @@ private:
     void initializeUI();
     void updateWindowTitle(const QString &filename = QString());
     void updateStatusBar(const QString &message);
+
+    // Project management helpers
+    bool saveProjectToJson(const QString &filePath);
+    bool loadProjectFromJson(const QString &filePath);
+    QString makePathRelative(const QString &absolutePath, const QString &basePath) const;
+    QString makePathAbsolute(const QString &relativePath, const QString &basePath) const;
 
     // Backend integration helpers
     void updatePinsTable();
