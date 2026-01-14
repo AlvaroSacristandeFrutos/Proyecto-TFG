@@ -64,9 +64,9 @@ private slots:
     void onExit();
 
     // View menu actions
-    void onTogglePins(bool checked);
-    void onToggleWatch(bool checked);
-    void onToggleWaveform(bool checked);
+    //void onTogglePins(bool checked);
+    //void onToggleWatch(bool checked);
+    //void onToggleWaveform(bool checked);
     void onZoom();
     void onSettings();                          // Open settings dialog
     void onPollingIntervalChanged(int ms);      // Handle polling interval change
@@ -91,7 +91,7 @@ private slots:
     void onSetTo0();
     void onSetTo1();
     void onSetToZ();
-    void onTogglePinValue();
+    //void onTogglePinValue();
     void onSetBusValue();
     void onSetBusToAllZ();
     void onSetAllDevicePinsToBSDLSafe();
@@ -148,6 +148,10 @@ private slots:
 
     // Waveform cursor selector slot
     void onCursorSelectorChanged(int index);
+
+    // Context menu slots
+    void onPinsTableContextMenu(const QPoint &pos);
+    void onWaveformContextMenu(const QPoint &pos);
 
 private:
     Ui::MainWindow *ui;

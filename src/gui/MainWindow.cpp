@@ -50,6 +50,7 @@
 #include <QDialogButtonBox>
 #include <QMetaType>
 #include <QSettings>
+#include <QMenu>
 
 // Standard Library
 #include <iostream>
@@ -330,6 +331,11 @@ void MainWindow::setupGraphicsViews()
     waveformNamesView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     waveformNamesView->setStyleSheet("background-color: rgb(245, 245, 245); border-right: 2px solid rgb(180, 180, 180);");
 
+    // Configurar menú contextual para la vista de nombres de waveform
+    waveformNamesView->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(waveformNamesView, &QGraphicsView::customContextMenuRequested,
+            this, &MainWindow::onWaveformContextMenu);
+
     // Configure existing waveform view
     ui->graphicsViewWaveform->setScene(waveformScene);
     ui->graphicsViewWaveform->setRenderHint(QPainter::Antialiasing);
@@ -518,6 +524,11 @@ void MainWindow::setupTables()
     connect(ui->tableWidgetPins->selectionModel(), &QItemSelectionModel::selectionChanged,
             this, &MainWindow::onPinTableSelectionChanged);
 
+    // Configurar menú contextual para la tabla de pines
+    ui->tableWidgetPins->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(ui->tableWidgetPins, &QTableWidget::customContextMenuRequested,
+            this, &MainWindow::onPinsTableContextMenu);
+
     // Setup Watch table
     ui->tableWidgetWatch->setColumnCount(6);
     ui->tableWidgetWatch->setHorizontalHeaderLabels(
@@ -691,7 +702,7 @@ void MainWindow::setupConnections()
     connect(ui->actionSet_to_0, &QAction::triggered, this, &MainWindow::onSetTo0);
     connect(ui->actionSet_to_1, &QAction::triggered, this, &MainWindow::onSetTo1);
     connect(ui->actionSet_to_Z, &QAction::triggered, this, &MainWindow::onSetToZ);
-    connect(ui->actionToggle, &QAction::triggered, this, &MainWindow::onTogglePinValue);
+    //connect(ui->actionToggle, &QAction::triggered, this, &MainWindow::onTogglePinValue);
     connect(ui->actionSet_Bus_Value, &QAction::triggered, this, &MainWindow::onSetBusValue);
     connect(ui->actionSet_Bus_to_All_Z, &QAction::triggered, this, &MainWindow::onSetBusToAllZ);
     connect(ui->actionSet_All_Device_Pins_to_BSDL_Safe, &QAction::triggered, this, &MainWindow::onSetAllDevicePinsToBSDLSafe);
@@ -755,7 +766,7 @@ void MainWindow::enableControlsAfterConnection(bool enable)
     ui->actionSet_to_0->setEnabled(enable && isDeviceInitialized);
     ui->actionSet_to_1->setEnabled(enable && isDeviceInitialized);
     ui->actionSet_to_Z->setEnabled(enable && isDeviceInitialized);
-    ui->actionToggle->setEnabled(enable && isDeviceInitialized);
+    //ui->actionToggle->setEnabled(enable && isDeviceInitialized);
     ui->actionSet_Bus_Value->setEnabled(enable && isDeviceInitialized);
 
     // Enable JTAG mode selector and quick action buttons
@@ -916,17 +927,17 @@ void MainWindow::onExit()
 // VIEW MENU SLOTS
 // ============================================================================
 
-void MainWindow::onTogglePins(bool checked)
+/*void MainWindow::onTogglePins(bool checked)
 {
     ui->dockPins->setVisible(checked);
 }
-
-void MainWindow::onToggleWatch(bool checked)
+*/
+/*void MainWindow::onToggleWatch(bool checked)
 {
     ui->dockWatch->setVisible(checked);
-}
+}*/
 
-void MainWindow::onToggleWaveform(bool checked)
+/*void MainWindow::onToggleWaveform(bool checked)
 {
     ui->dockWaveform->setVisible(checked);
 
@@ -938,7 +949,7 @@ void MainWindow::onToggleWaveform(bool checked)
         m_waveformRenderTimer->stop();  // Pausar cuando se oculta
     }
     // ====================================================================
-}
+}*/
 
 void MainWindow::onZoom()
 {
@@ -1822,7 +1833,7 @@ void MainWindow::onSetToZ()
     updateStatusBar(QString("Set %1 pin(s) to Z").arg(rows.size()));
 }
 
-void MainWindow::onTogglePinValue()
+/*void MainWindow::onTogglePinValue()
 {
     QList<QTableWidgetItem*> selectedItems = ui->tableWidgetPins->selectedItems();
     if (selectedItems.isEmpty()) {
@@ -1856,7 +1867,7 @@ void MainWindow::onTogglePinValue()
 
     // No se necesita applyChanges() - el worker lo hace automáticamente
     updateStatusBar(QString("Toggled %1 pin(s)").arg(rows.size()));
-}
+}*/
 
 void MainWindow::onSetBusValue()
 {
@@ -2583,18 +2594,40 @@ void MainWindow::renderChipVisualization()
 
 void MainWindow::updateControlPanel(const std::vector<JTAG::PinLevel>& pinLevels)
 {
-    // El Control Panel es SOLO para edición del usuario en modos EXTEST/INTEST
-    // NO debe actualizarse automáticamente desde el backend, ya que eso
-    // sobreescribiría las selecciones del usuario en los radio buttons
+    // Validación de seguridad
+    if (!scanController || !controlPanel || !scanController->getDeviceModel()) return;
 
-    // El flujo correcto es:
-    // Usuario cambia radio button → emit pinValueChanged → setPinAsync →
-    // backend actualiza → GUI mantiene el valor seleccionado por el usuario
+    // Solo actualizamos si estamos en EXTEST o INTEST
+    if (currentJTAGMode != JTAGMode::EXTEST && currentJTAGMode != JTAGMode::INTEST) return;
 
-    // Por tanto, este método NO hace nada intencionalmente
-    Q_UNUSED(pinLevels);
+    // Bloqueamos señales para evitar bucles de feedback
+    const bool wasBlocked = controlPanel->signalsBlocked();
+    controlPanel->blockSignals(true);
+
+    const auto* deviceModel = scanController->getDeviceModel();
+    auto pinNames = scanController->getPinList(); // Esto devuelve std::string
+
+    for (const auto& pinName : pinNames) {
+        auto pinInfo = deviceModel->getPinInfo(pinName);
+
+        // Si el pin tiene celda de salida
+        if (pinInfo && pinInfo->outputCell >= 0) {
+            size_t index = static_cast<size_t>(pinInfo->outputCell);
+
+            // Si el índice es válido
+            if (index < pinLevels.size()) {
+                JTAG::PinLevel level = pinLevels[index];
+
+                // CORRECCIÓN: Pasamos 'pinName' directamente (es std::string)
+                // El ControlPanel espera std::string, no QString.
+                controlPanel->updatePinValue(pinName, level);
+            }
+        }
+    }
+
+    // Restauramos señales
+    controlPanel->blockSignals(wasBlocked);
 }
-
 void MainWindow::captureWaveformSample(const std::vector<JTAG::PinLevel>& currentPins)
 {
     // ==================== PUNTO DE INTEGRACIÓN 13 ====================
@@ -3212,81 +3245,86 @@ void MainWindow::onJTAGModeChanged(int modeId)
     updatePinsTable(); // Refrescar para habilitar/deshabilitar edición
 }
 
+// ----------------------------------------------------------------------------
+// SET ALL TO SAFE (High-Z por defecto)
+// ----------------------------------------------------------------------------
 void MainWindow::onSetAllToSafeState()
 {
     if (!scanController) return;
-
     // Use the menu action implementation which already exists
     onSetAllDevicePinsToBSDLSafe();
 }
 
+// ----------------------------------------------------------------------------
+// SET ALL TO 1 (HIGH)
+// ----------------------------------------------------------------------------
 void MainWindow::onSetAllTo1()
 {
-    if (!scanController) return;
+    if (!scanController || !scanController->getDeviceModel()) return;
     if (!isEditingModeActive()) return;
 
-    // Get all output pins and set them to HIGH
-    auto pinList = scanController->getPinList();
+    // 1. Obtenemos acceso directo a todos los pines (más rápido que strings)
+    const auto& allPins = scanController->getDeviceModel()->getAllPins();
     int count = 0;
 
-    for (const auto& pinName : pinList) {
-        std::string type = scanController->getPinType(pinName);
-        if (type == "OUTPUT" || type == "INOUT") {
-            if (scanController->setPin(pinName, JTAG::PinLevel::HIGH)) {
-                count++;
-            }
+    for (const auto& pin : allPins) {
+        // 2. FILTRO ROBUSTO: Si tiene celda de salida (outputCell >= 0), es escribible.
+        // Esto cubre OUTPUT, INOUT, OUTPUT2, etc. automáticamente.
+        if (pin.outputCell >= 0) {
+            // 3. ASYNC: Usamos setPinAsync para no chocar con el worker
+            scanController->setPinAsync(pin.name, JTAG::PinLevel::HIGH);
+            count++;
         }
     }
 
-    scanController->applyChanges();
-    updateStatusBar(QString("Set %1 output pins to HIGH").arg(count));
-    updatePinsTable();
+    // 4. NO LLAMAR A applyChanges(). 
+    // El worker detectará los pines sucios (dirty) y los aplicará automáticamente.
+
+    updateStatusBar(QString("Queued %1 output pins to HIGH").arg(count));
+
+    // La tabla se actualizará sola cuando el worker confirme los cambios (onPinsDataReady)
 }
 
+// ----------------------------------------------------------------------------
+// SET ALL TO Z (HIGH-Z / TRISTATE)
+// ----------------------------------------------------------------------------
 void MainWindow::onSetAllToZ()
 {
-    if (!scanController) return;
+    if (!scanController || !scanController->getDeviceModel()) return;
     if (!isEditingModeActive()) return;
 
-    // Get all output pins and set them to HIGH_Z
-    auto pinList = scanController->getPinList();
+    const auto& allPins = scanController->getDeviceModel()->getAllPins();
     int count = 0;
 
-    for (const auto& pinName : pinList) {
-        std::string type = scanController->getPinType(pinName);
-        if (type == "OUTPUT" || type == "INOUT") {
-            if (scanController->setPin(pinName, JTAG::PinLevel::HIGH_Z)) {
-                count++;
-            }
+    for (const auto& pin : allPins) {
+        if (pin.outputCell >= 0) {
+            scanController->setPinAsync(pin.name, JTAG::PinLevel::HIGH_Z);
+            count++;
         }
     }
 
-    scanController->applyChanges();
-    updateStatusBar(QString("Set %1 output pins to High-Z").arg(count));
-    updatePinsTable();
+    updateStatusBar(QString("Queued %1 output pins to High-Z").arg(count));
 }
 
+// ----------------------------------------------------------------------------
+// SET ALL TO 0 (LOW)
+// ----------------------------------------------------------------------------
 void MainWindow::onSetAllTo0()
 {
-    if (!scanController) return;
+    if (!scanController || !scanController->getDeviceModel()) return;
     if (!isEditingModeActive()) return;
 
-    // Get all output pins and set them to LOW
-    auto pinList = scanController->getPinList();
+    const auto& allPins = scanController->getDeviceModel()->getAllPins();
     int count = 0;
 
-    for (const auto& pinName : pinList) {
-        std::string type = scanController->getPinType(pinName);
-        if (type == "OUTPUT" || type == "INOUT") {
-            if (scanController->setPin(pinName, JTAG::PinLevel::LOW)) {
-                count++;
-            }
+    for (const auto& pin : allPins) {
+        if (pin.outputCell >= 0) {
+            scanController->setPinAsync(pin.name, JTAG::PinLevel::LOW);
+            count++;
         }
     }
 
-    scanController->applyChanges();
-    updateStatusBar(QString("Set %1 output pins to LOW").arg(count));
-    updatePinsTable();
+    updateStatusBar(QString("Queued %1 output pins to LOW").arg(count));
 }
 
 void MainWindow::onControlPanelPinChanged(QString pinName, JTAG::PinLevel level)
@@ -3633,4 +3671,104 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
     }
 
     return QMainWindow::eventFilter(obj, event);
+}
+
+// ============================================================================
+// CONTEXT MENU HANDLERS
+// ============================================================================
+
+void MainWindow::onPinsTableContextMenu(const QPoint &pos)
+{
+    // Verificar que hay filas seleccionadas
+    QList<QTableWidgetItem*> selectedItems = ui->tableWidgetPins->selectedItems();
+    if (selectedItems.isEmpty()) {
+        return;  // No mostrar menú si no hay selección
+    }
+
+    // Crear menú contextual
+    QMenu contextMenu(tr("Pin Actions"), this);
+
+    // Añadir acción "Add to Waveform"
+    QAction *addToWaveformAction = new QAction(tr("Add to Waveform"), this);
+    addToWaveformAction->setIcon(QIcon::fromTheme("list-add"));
+    connect(addToWaveformAction, &QAction::triggered, this, &MainWindow::onWaveformAddSignal);
+
+    contextMenu.addAction(addToWaveformAction);
+
+    // Mostrar menú en la posición del cursor
+    contextMenu.exec(ui->tableWidgetPins->mapToGlobal(pos));
+}
+
+void MainWindow::onWaveformContextMenu(const QPoint &pos)
+{
+    // Verificar que hay señales en el waveform
+    if (waveformSignals.empty()) {
+        return;  // No mostrar menú si no hay señales
+    }
+
+    // Convertir posición del widget a coordenadas de escena
+    QPointF scenePos = waveformNamesView->mapToScene(pos);
+
+    // Calcular qué señal fue clickeada basándose en la posición Y
+    const int SIGNAL_HEIGHT = 40;  // Debe coincidir con el valor en redrawWaveform()
+    int row = static_cast<int>(scenePos.y()) / SIGNAL_HEIGHT;
+
+    // Verificar que el row es válido
+    if (row < 0 || row >= static_cast<int>(waveformSignals.size())) {
+        return;  // Click fuera de las señales
+    }
+
+    // Obtener nombre de la señal clickeada
+    QString signalName = QString::fromStdString(waveformSignals[row].name);
+
+    // Crear menú contextual
+    QMenu contextMenu(tr("Signal Actions"), this);
+
+    // Añadir acción "Remove Signal"
+    QAction *removeSignalAction = new QAction(tr("Remove '%1'").arg(signalName), this);
+    removeSignalAction->setIcon(QIcon::fromTheme("list-remove"));
+
+    // Conectar la acción para eliminar esta señal específica
+    connect(removeSignalAction, &QAction::triggered, this, [this, signalName]() {
+        std::string pinName = signalName.toStdString();
+
+        // Eliminar de waveformSignals
+        waveformSignals.erase(
+            std::remove_if(waveformSignals.begin(), waveformSignals.end(),
+                [&pinName](const WaveformSignalInfo& sig) { return sig.name == pinName; }),
+            waveformSignals.end());
+
+        // Eliminar del buffer
+        waveformBuffer.erase(pinName);
+
+        // Actualizar mensaje de estado
+        updateStatusBar(QString("Signal '%1' removed from waveform").arg(signalName));
+
+        // Invalidar cache de transiciones (los cursores pueden necesitar recalcular)
+        m_transitionCache.dirty = true;
+
+        // Si no quedan señales, detener el timer de renderizado
+        if (waveformSignals.empty()) {
+            m_waveformRenderTimer->stop();
+            m_waveformNeedsRedraw = false;
+        }
+
+        // Redibujar waveform
+        m_waveformNeedsRedraw = true;
+    });
+
+    contextMenu.addAction(removeSignalAction);
+
+    // Añadir separador
+    contextMenu.addSeparator();
+
+    // Añadir acción "Remove All Signals"
+    QAction *removeAllAction = new QAction(tr("Remove All Signals"), this);
+    removeAllAction->setIcon(QIcon::fromTheme("edit-clear"));
+    connect(removeAllAction, &QAction::triggered, this, &MainWindow::onWaveformRemoveAll);
+
+    contextMenu.addAction(removeAllAction);
+
+    // Mostrar menú en la posición del cursor
+    contextMenu.exec(waveformNamesView->mapToGlobal(pos));
 }

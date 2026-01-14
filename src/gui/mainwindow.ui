@@ -97,7 +97,6 @@
     <addaction name="actionSet_to_0"/>
     <addaction name="actionSet_to_1"/>
     <addaction name="actionSet_to_Z"/>
-    <addaction name="actionToggle"/>
     <addaction name="separator"/>
     <addaction name="actionSet_Bus_Value"/>
     <addaction name="actionSet_Bus_to_All_Z"/>
@@ -776,14 +775,6 @@ QHeaderView::section {
    </property>
    <property name="shortcut">
     <string>Ctrl+Z</string>
-   </property>
-  </action>
-  <action name="actionToggle">
-   <property name="text">
-    <string>Toggle</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+T</string>
    </property>
   </action>
   <action name="actionSet_Bus_Value">

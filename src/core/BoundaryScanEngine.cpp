@@ -288,7 +288,7 @@ namespace JTAG {
         // CRÍTICO: Ciclos de reloj adicionales en RUN-TEST/IDLE después de UPDATE-DR
         // Da tiempo a que los buffers de salida del chip conmuten físicamente
         // Necesario en EXTEST/INTEST para evitar latencia de 1 ciclo
-        if (operationMode == OperationMode::EXTEST || operationMode == OperationMode::INTEST) {
+        if (operationMode == OperationMode::EXTEST || operationMode == OperationMode::INTEST || operationMode == OperationMode::BYPASS) {
             runTestCycles(1);  // 10 ciclos de reloj @ 1 MHz = 10 μs
             //Se puede poner 1 ciclo de reloj y es suficiente, pero es por asegurar. Con 0 sí que falla
         }
@@ -309,6 +309,15 @@ namespace JTAG {
 
         currentState = TAPState::RUN_TEST_IDLE;
         return true;
+    }
+
+    void BoundaryScanEngine::syncWriteBufferFromRead() {
+        if (bsrLength > 0 && bsr.size() == bsrCapture.size()) {
+            // AQUÍ ESTÁ LA CLAVE: 
+            // Sobrescribimos lo que "pensábamos escribir" (bsr) 
+            // con "la realidad que acabamos de leer" (bsrCapture).
+            bsr = bsrCapture;
+        }
     }
 
 } // namespace JTAG

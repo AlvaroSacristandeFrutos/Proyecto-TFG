@@ -119,6 +119,21 @@ namespace JTAG {
                 bool modeChanged = (targetMode != lastMode) || firstRun || forceReloadRequested;
 
                 if (modeChanged) {
+
+                    if (targetMode == ScanMode::EXTEST || targetMode == ScanMode::INTEST) {
+
+                        // 1. Tomar la "última foto" de la realidad
+                        engine->samplePins();
+
+                        // 2. 
+                        // Actualizamos el buffer de escritura con esa foto reciente.
+                        // Ahora Escritura == Lectura (Realidad).
+                        engine->syncWriteBufferFromRead();
+
+                        // 3. (Opcional pero recomendado) Preload para asegurar que el chip lo tenga listo
+                        engine->preloadBSR();
+                    }
+
                     std::string instrName = "SAMPLE"; // Default
                     if (targetMode == ScanMode::SAMPLE_SINGLE_SHOT) instrName = "SAMPLE";
                     if (targetMode == ScanMode::EXTEST) instrName = "EXTEST";

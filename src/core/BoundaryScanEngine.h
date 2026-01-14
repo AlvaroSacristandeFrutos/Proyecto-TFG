@@ -67,6 +67,7 @@ namespace JTAG {
             INTEST,   // Lectura/escritura, igual que EXTEST
             BYPASS    // Bypass, tratar como solo lectura
         };
+        void syncWriteBufferFromRead();
 
         void setOperationMode(OperationMode mode) { operationMode = mode; }
         OperationMode getOperationMode() const { return operationMode; }
