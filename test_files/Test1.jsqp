@@ -4,7 +4,7 @@
         "height": 400,
         "width": 400
     },
-    "chipVisualizerZoom": 0.6984667802385008,
+    "chipVisualizerZoom": 0.5672913117546848,
     "customPinNames": {
         "P1": "CLKIN",
         "P10": "LORA_DIO1",
@@ -19,7 +19,7 @@
         "P122": "RXD2",
         "P13": "ICE_LED1",
         "P14": "ICE_LED2",
-        "P15": "ICE_LED33",
+        "P15": "ICE_LED3",
         "P16": "ICE_LED4",
         "P17": "EN_5V_UP",
         "P18": "EN_5V_M4",
@@ -40,7 +40,7 @@
         "P8": "RXD",
         "P9": "TXD"
     },
-    "deviceName": "LarVa2",
+    "deviceName": "",
     "jtagMode": "SAMPLE",
     "layout": {
         "geometry": "AdnQywADAAAAAAAA////+QAABf8AAAM3AAAABwAAABoAAAS2AAADNgAAAAACAAAABgAAAAAAAAAAFwAABf8AAAM3",
@@ -51,26 +51,38 @@
             80,
             120
         ],
-        "windowState": "AAAA/wAAAAD9AAAAAwAAAAAAAAIIAAABoPwCAAAAAfsAAAAQAGQAbwBjAGsAUABpAG4AcwEAAAAyAAABoAAAAMgA////AAAAAQAAAcsAAAGg/AIAAAAB+wAAABIAZABvAGMAawBXAGEAdABjAGgAAAAAMgAAAaAAAADIAP///wAAAAMAAAYAAAABNvwBAAAAAfsAAAAYAGQAbwBjAGsAVwBhAHYAZQBmAG8AcgBtAQAAAAAAAAYAAAAB9gD///8AAAP0AAABoAAAAAQAAAAEAAAACAAAAAj8AAAAAQAAAAIAAAABAAAADgB0AG8AbwBsAEIAYQByAQAAAAD/////AAAAAAAAAAA="
+        "windowState": "AAAA/wAAAAD9AAAAAwAAAAAAAAIIAAABU/wCAAAAAfsAAAAQAGQAbwBjAGsAUABpAG4AcwEAAAAyAAABUwAAAMgA////AAAAAQAAAcsAAAGg/AIAAAAB+wAAABIAZABvAGMAawBXAGEAdABjAGgAAAAAMgAAAaAAAADIAP///wAAAAMAAAYAAAABg/wBAAAAAfsAAAAYAGQAbwBjAGsAVwBhAHYAZQBmAG8AcgBtAQAAAAAAAAYAAAAB9gD///8AAAP0AAABUwAAAAQAAAAEAAAACAAAAAj8AAAAAQAAAAIAAAABAAAADgB0AG8AbwBsAEIAYQByAQAAAAD/////AAAAAAAAAAA="
     },
     "packageType": "EDGE",
     "projectVersion": "1.0",
     "settings": {
-        "chipVisFPS": 20,
-        "pollingInterval": 1,
+        "chipVisFPS": 30,
+        "pollingInterval": 100,
         "sampleDecimation": 1,
-        "samplesPerSecond": 30,
+        "samplesPerSecond": 300,
         "waveformFPS": 1
     },
-    "timestamp": "2026-01-15T18:03:41",
+    "timestamp": "2026-01-16T20:42:18",
     "waveform": {
         "autoScrollEnabled": true,
-        "scrollPosition": 1155,
+        "scrollPosition": 1041,
         "signals": [
+            "ICE_SCK",
+            "ICE_MISO",
+            "ADC_CS",
+            "LORA_BUSY",
+            "BME680_CS",
+            "ICE_MOSI",
             "ICE_LED1",
+            "ICE_LED3",
             "ICE_LED2",
-            "ICE_LED33",
-            "ICE_LED4"
+            "L_RX",
+            "EN_1V4_M4",
+            "LORA_DIO1",
+            "EN_5V_M4",
+            "ICE_LED4",
+            "L_TX",
+            "EN_5V_UP"
         ],
         "timebase": 1
     }

@@ -46,6 +46,7 @@
 #include <QSplitter>
 #include <QScrollBar>
 #include <QKeyEvent>
+#include <QPainterPath>
 #include <QDialog>
 #include <QListWidget>
 #include <QDialogButtonBox>
@@ -167,8 +168,26 @@ MainWindow::MainWindow(QWidget *parent)
     int waveformIntervalMs = 1000 / currentWaveformFPS;
     m_waveformRenderTimer->setInterval(waveformIntervalMs);
     connect(m_waveformRenderTimer, &QTimer::timeout, this, [this]() {
-        // Solo redibujar si hay cambios pendientes y el dock es visible
+        // Solo procesar si hay cambios pendientes y el dock es visible
         if (m_waveformNeedsRedraw && ui->dockWaveform->isVisible()) {
+            // ===== PROCESAR BATCH DE MUESTRAS ACUMULADAS =====
+            // Esto procesa TODAS las muestras pendientes de una sola vez
+            for (const auto& sample : m_pendingSamples) {
+                // Agregar cada muestra al buffer de cada señal
+                for (const auto& sigInfo : waveformSignals) {
+                    if (sigInfo.dataIndex >= 0 && sigInfo.dataIndex < static_cast<int>(sample.pins.size())) {
+                        JTAG::PinLevel level = sample.pins[sigInfo.dataIndex];
+                        auto& buffer = waveformBuffer[sigInfo.name];
+                        buffer.push_back({sample.timestamp, level});
+                        if (buffer.size() > MAX_WAVEFORM_SAMPLES) {
+                            buffer.pop_front();
+                        }
+                    }
+                }
+            }
+            m_pendingSamples.clear();  // Limpiar batch procesado
+            // ================================================
+
             redrawWaveform();
             m_waveformNeedsRedraw = false;
         }
@@ -193,6 +212,21 @@ MainWindow::MainWindow(QWidget *parent)
     });
     m_chipVisRenderTimer->start();  // Siempre activo
     qDebug() << "[MainWindow] ChipVisualizer render timer configured at" << currentChipVisFPS << "FPS (" << chipVisIntervalMs << "ms)";
+
+    // PinsTable render throttling timer (usa mismo FPS que ChipVisualizer)
+    m_pinsTableRenderTimer = new QTimer(this);
+    m_pinsTableRenderTimer->setInterval(chipVisIntervalMs);  // Mismo intervalo que ChipVis
+    m_pinsTableNeedsRedraw = false;
+    m_latestPinsData = nullptr;
+    connect(m_pinsTableRenderTimer, &QTimer::timeout, this, [this]() {
+        if (m_pinsTableNeedsRedraw && m_latestPinsData && ui->tableWidgetPins->isVisible()) {
+            updatePinsTable();
+            updateControlPanel(*m_latestPinsData);
+            m_pinsTableNeedsRedraw = false;
+        }
+    });
+    m_pinsTableRenderTimer->start();  // Siempre activo
+    qDebug() << "[MainWindow] PinsTable render timer configured at" << currentChipVisFPS << "FPS (" << chipVisIntervalMs << "ms)";
     // =========================================================
 
     updateWindowTitle();
@@ -343,6 +377,7 @@ void MainWindow::setupGraphicsViews()
     timelineView->setFixedHeight(30);
     timelineView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     timelineView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    timelineView->setAlignment(Qt::AlignTop | Qt::AlignLeft);  // Alinear arriba para que se vean las etiquetas
     timelineView->setStyleSheet("background-color: rgb(245, 245, 245); border-bottom: 1px solid rgb(200, 200, 200);");
 
     // Create fixed names view (left side, 150px wide)
@@ -782,6 +817,7 @@ void MainWindow::setupConnections()
     connect(ui->actionWaveZoomOut, &QAction::triggered, this, &MainWindow::onWaveZoomOut);
     connect(ui->actionWaveFit, &QAction::triggered, this, &MainWindow::onWaveFit);
     connect(ui->actionWaveGoto, &QAction::triggered, this, &MainWindow::onWaveGoto);
+    connect(ui->actionWaveRestartTime, &QAction::triggered, this, &MainWindow::onWaveRestartTime);
 
     // Control Panel connection
     if (controlPanel) {
@@ -1190,6 +1226,7 @@ void MainWindow::onJTAGConnection()
         // Limpiar controles
         ui->comboBoxDevice->clear();
         ui->tableWidgetPins->setRowCount(0);
+        invalidatePinNameCache();
 
         if (controlPanel) {
             controlPanel->removeAllPins();
@@ -1323,32 +1360,33 @@ void MainWindow::onRun()
     }
 
     if (!isCapturing) {
-        // NO limpiar buffers de waveform - queremos mantener historial
-        // (comentado para preservar datos históricos al reanudar)
-        // for (auto& [name, samples] : waveformBuffer) {
-        //     samples.clear();
-        // }
+        // PAUSE/RESUME: No reiniciamos desde 0, continuamos desde donde paramos
+        // captureTimeOffset acumula el tiempo de sesiones anteriores
 
         // IMPORTANTE: NO cambiar el modo JTAG aquí
         // El modo ya fue configurado (SAMPLE, EXTEST, INTEST, etc.)
         // Solo necesitamos iniciar el polling con el modo actual
 
         // El worker ya está configurado con el modo correcto por onJTAGModeChanged()
-        // Solo necesitamos iniciar el polling
         isCapturing = true;
-        captureTimer.restart();  // Resetear timer para waveform
+        captureTimer.restart();  // Reinicia el timer local (offset preserva historia)
         scanController->startPolling();  // Iniciar worker thread (usa el modo actual)
 
-        updateStatusBar(QString("Running - capturing in %1 mode")
+        double totalTime = (captureTimeOffset / 1000.0);
+        updateStatusBar(QString("Running - capturing in %1 mode (resuming from %2s)")
             .arg(currentJTAGMode == JTAGMode::SAMPLE ? "SAMPLE" :
                  currentJTAGMode == JTAGMode::EXTEST ? "EXTEST" :
-                 currentJTAGMode == JTAGMode::INTEST ? "INTEST" : "current"));
+                 currentJTAGMode == JTAGMode::INTEST ? "INTEST" : "current")
+            .arg(totalTime, 0, 'f', 1));
         ui->actionRun->setText("Stop");
     } else {
-        // Detener captura
+        // PAUSE: Acumular tiempo transcurrido para reanudar después
+        captureTimeOffset += captureTimer.elapsed();
         isCapturing = false;
         scanController->stopPolling();  // Detener worker thread
-        updateStatusBar("Stopped");
+
+        double totalTime = (captureTimeOffset / 1000.0);
+        updateStatusBar(QString("Paused at %1s").arg(totalTime, 0, 'f', 1));
         ui->actionRun->setText("Run");
     }
 }
@@ -1392,6 +1430,7 @@ void MainWindow::onReset()
         // Limpiar controles
         ui->comboBoxDevice->clear();
         ui->tableWidgetPins->setRowCount(0);
+        invalidatePinNameCache();
 
         if (controlPanel) {
             controlPanel->removeAllPins();
@@ -1418,6 +1457,7 @@ void MainWindow::onReset()
         // Limpiar waveform data
         waveformBuffer.clear();          // Borrar todas las muestras capturadas
         waveformSignals.clear();         // Borrar lista de señales agregadas
+        captureTimeOffset = 0;           // Reset del offset de tiempo
         captureTimer.invalidate();       // Reset del timer de captura
         m_waveformNeedsRedraw = true;    // Marcar para redibujado
 
@@ -2216,18 +2256,44 @@ void MainWindow::onWaveformRemoveAll()
 
 void MainWindow::onWaveformClear()
 {
-    // Clear waveform data but keep signals
+    // Confirmar si hay datos
+    if (!waveformBuffer.empty()) {
+        bool hasData = false;
+        for (const auto& [name, samples] : waveformBuffer) {
+            if (!samples.empty()) { hasData = true; break; }
+        }
+        if (hasData) {
+            auto reply = QMessageBox::question(this, "Clear Waveform",
+                "This will clear all waveform data and reset the timer to 0.\nContinue?",
+                QMessageBox::Yes | QMessageBox::No);
+            if (reply != QMessageBox::Yes) return;
+        }
+    }
+
+    // 1. Limpiar buffers de datos
+    for (auto& [name, samples] : waveformBuffer) {
+        samples.clear();
+    }
+    m_pendingSamples.clear();
+
+    // 2. Reiniciar el contador de tiempo
+    captureTimeOffset = 0;
+    captureTimer.invalidate();
+
+    // 3. Limpiar la escena visual
     waveformScene->clear();
     m_cursor1Line = nullptr;
     m_cursor2Line = nullptr;
-    
-    // Recreate grid
-    QPen gridPen(QColor(220, 220, 220));
-    for (int i = 0; i < 20; i++) {
-        waveformScene->addLine(i * 50, 0, i * 50, 200, gridPen);
-    }
-    
-    updateStatusBar("Waveform data cleared");
+
+    // 4. Limpiar cursores
+    m_cursor1Pos.defined = false;
+    m_cursor2Pos.defined = false;
+    m_transitionCache.dirty = true;
+
+    // 5. Redibujar vacío
+    redrawWaveform();
+
+    updateStatusBar("Waveform cleared - timer reset to 0");
 }
 
 void MainWindow::onWaveformZoom()
@@ -2304,24 +2370,83 @@ void MainWindow::onWaveformGoToTime()
 
 void MainWindow::onHelpContents()
 {
-    QMessageBox::information(this, "Help", 
-        "This is a JTAG Boundary Scan tool.\n\n"
-        "Basic workflow:\n"
-        "1. Connect to JTAG adapter (Scan > JTAG Connection)\n"
-        "2. Detect device (Scan > Examine the Chain)\n"
-        "3. Load BSDL file (Scan > Device BSDL File)\n"
-        "4. Run to capture pin states (Scan > Run or F5)\n"
-        "5. Control pins via Pins panel");
+    QMessageBox msgBox(this);
+    msgBox.setWindowTitle("Help - JtagScannerQt");
+    msgBox.setTextFormat(Qt::RichText);
+    msgBox.setText(
+        "<h2>JtagScannerQt - JTAG Boundary Scan Tool</h2>"
+
+        "<h3>Getting Started</h3>"
+        "<ol>"
+        "<li>Click <b>Scan</b> button in the toolbar</li>"
+        "<li>Select your JTAG probe and connection speed</li>"
+        "<li>The <b>New Project Wizard</b> will open automatically</li>"
+        "<li>In the wizard you can:"
+        "<ul>"
+        "<li>Load a BSDL file and select chip package type</li>"
+        "<li>Or load an existing project (.json)</li>"
+        "</ul></li>"
+        "<li>Select JTAG mode and click <b>Run (F5)</b> to start</li>"
+        "</ol>"
+
+        "<h3>JTAG Modes</h3>"
+        "<ul>"
+        "<li><b>SAMPLE</b> - Read pin states continuously (non-invasive observation)</li>"
+        "<li><b>SAMPLE Single-Shot</b> - Read pin states once and stop</li>"
+        "<li><b>EXTEST</b> - Control output pins externally (active mode)</li>"
+        "<li><b>INTEST</b> - Test internal chip logic via boundary scan</li>"
+        "<li><b>BYPASS</b> - Minimal scan chain for multi-device chains</li>"
+        "</ul>"
+
+        "<h3>Main Panels</h3>"
+        "<ul>"
+        "<li><b>Pins Table</b> - View and edit all device pins with filtering</li>"
+        "<li><b>Control Panel</b> - Quick access to watched pins for manual control</li>"
+        "<li><b>Waveform Viewer</b> - Digital signal viewer with cursors and zoom</li>"
+        "<li><b>Chip Visualizer</b> - Visual package pin-out representation</li>"
+        "</ul>"
+
+        "<h3>Keyboard Shortcuts</h3>"
+        "<table>"
+        "<tr><td><b>F5</b></td><td>Run/Stop capture</td></tr>"
+        "<tr><td><b>F6</b></td><td>Reset device</td></tr>"
+        "<tr><td><b>Ctrl+S</b></td><td>Save project</td></tr>"
+        "<tr><td><b>Ctrl+O</b></td><td>Open project</td></tr>"
+        "</table>"
+
+        "<h3>Tips</h3>"
+        "<ul>"
+        "<li>Right-click on pins to add them to Control Panel or Waveform</li>"
+        "<li>Use <b>View > Settings</b> to adjust sampling rate and performance</li>"
+        "<li>Waveform automatically decimates data when zoomed out</li>"
+        "<li>Use the <b>T=0</b> button to reset waveform time without removing signals</li>"
+        "<li>Run/Stop pauses capture - use Waveform > Clear to start fresh</li>"
+        "</ul>"
+    );
+    msgBox.exec();
 }
 
 void MainWindow::onAbout()
 {
-    QMessageBox::about(this, "About JtagScannerQt_UVa",
-        "JtagScannerQt_UVa\n"
-        "JTAG Boundary Scan Tool\n"
-        "Version 1.0\n\n"
-        "Developed at Universidad de Valladolid\n"
-        "Built with Qt 6.7.3");
+    QMessageBox msgBox(this);
+    msgBox.setWindowTitle("About JtagScannerQt");
+    msgBox.setTextFormat(Qt::RichText);
+    msgBox.setMinimumWidth(450);
+    msgBox.setText(
+        "<h2 style='text-align:center;'>JtagScannerQt</h2>"
+        "<p style='text-align:center;'><b>JTAG Boundary Scan Tool</b></p>"
+        "<p style='text-align:center;'>Version 1.0</p>"
+        "<hr>"
+        "<table width='100%'>"
+        "<tr><td><b>Autor:</b></td><td>Álvaro Sacristán de Frutos</td></tr>"
+        "<tr><td><b>Institución:</b></td><td>Universidad de Valladolid</td></tr>"
+        "<tr><td><b>Departamento:</b></td><td>Departamento de Electrónica</td></tr>"
+        "<tr><td><b>Centro:</b></td><td>E.T.S.I. de Telecomunicación</td></tr>"
+        "</table>"
+        "<hr>"
+        "<p style='text-align:center;'><small>Built with Qt 6.7.3</small></p>"
+    );
+    msgBox.exec();
 }
 
 // ============================================================================
@@ -2415,6 +2540,29 @@ void MainWindow::onWaveGoto()
     onWaveformGoToTime();
 }
 
+void MainWindow::onWaveRestartTime()
+{
+    // Limpiar datos de todas las señales (pero mantener las señales en la lista)
+    for (auto& [name, samples] : waveformBuffer) {
+        samples.clear();
+    }
+    m_pendingSamples.clear();
+
+    // Reiniciar el contador de tiempo a 0
+    captureTimeOffset = 0;
+    captureTimer.restart();
+
+    // Limpiar cursores
+    m_cursor1Pos.defined = false;
+    m_cursor2Pos.defined = false;
+    m_transitionCache.dirty = true;
+
+    // Redibujar (vacío pero con las señales esperando)
+    redrawWaveform();
+
+    updateStatusBar("Time reset to 0 - signals ready for capture");
+}
+
 // ============================================================================
 // POLLING AND BACKEND INTEGRATION
 // ============================================================================
@@ -2428,6 +2576,7 @@ void MainWindow::updatePinsTable()
 
     if (scanController->getDeviceModel() == nullptr) {
         ui->tableWidgetPins->setRowCount(0); // Asegurar tabla vacía
+        invalidatePinNameCache();
         return;
     }
 
@@ -2462,6 +2611,8 @@ void MainWindow::updatePinsTable()
 
     if (isFirstLoad) {
         ui->tableWidgetPins->setRowCount(0);
+        invalidatePinNameCache();  // Invalidar cache al reconstruir tabla
+
         for (const auto& pName : pinNames) {
             int row = ui->tableWidgetPins->rowCount();
             ui->tableWidgetPins->insertRow(row);
@@ -2516,8 +2667,31 @@ void MainWindow::updatePinsTable()
         QString type = QString::fromStdString(pinInfo->type);
         // =====================================================
 
-        // 3. Leer estado del pin
-        auto level = scanController->getPin(pinName);
+        // 3. Leer estado del pin - OPTIMIZADO: usar m_latestPinsData si disponible
+        std::optional<JTAG::PinLevel> level;
+
+        if (m_latestPinsData && !m_latestPinsData->empty()) {
+            // ===== ACCESO DIRECTO AL BUFFER - SIN LLAMADAS A FUNCIÓN =====
+            // Determinar qué celda usar según el tipo de pin y modo
+            int cellIndex = -1;
+            if (currentJTAGMode == JTAGMode::EXTEST || currentJTAGMode == JTAGMode::INTEST) {
+                // En EXTEST/INTEST: usar outputCell (lo que enviamos)
+                cellIndex = pinInfo->outputCell;
+                if (cellIndex < 0) cellIndex = pinInfo->inputCell;  // fallback
+            } else {
+                // En SAMPLE: usar inputCell (lo que recibimos)
+                cellIndex = pinInfo->inputCell;
+                if (cellIndex < 0) cellIndex = pinInfo->outputCell;  // fallback
+            }
+
+            if (cellIndex >= 0 && cellIndex < static_cast<int>(m_latestPinsData->size())) {
+                level = (*m_latestPinsData)[cellIndex];
+            }
+            // =============================================================
+        } else {
+            // Fallback: llamar a getPin si no hay datos en buffer
+            level = scanController->getPin(pinName);
+        }
 
         if (level.has_value()) {
             QString valueStr;
@@ -2633,20 +2807,33 @@ void MainWindow::updatePinsTable()
     ui->tableWidgetPins->blockSignals(wasBlocked);
 }
 
-QString MainWindow::resolveRealPinName(const QString& displayName) const
+void MainWindow::rebuildPinNameCache() const
 {
-    // Buscar en la tabla el item con este displayName
-    // y obtener el nombre real desde UserRole
+    m_displayToRealNameCache.clear();
+    m_displayToRealNameCache.reserve(ui->tableWidgetPins->rowCount());
+
     for (int row = 0; row < ui->tableWidgetPins->rowCount(); row++) {
         QTableWidgetItem* nameItem = ui->tableWidgetPins->item(row, 0);
-        if (nameItem && nameItem->text() == displayName) {
-            // El nombre real está guardado en UserRole
+        if (nameItem) {
+            QString displayName = nameItem->text();
             QString realName = nameItem->data(Qt::UserRole).toString();
-            return realName.isEmpty() ? displayName : realName;
+            m_displayToRealNameCache[displayName] = realName.isEmpty() ? displayName : realName;
         }
     }
-    // Si no se encuentra, asumir que displayName es el nombre real
-    return displayName;
+    m_pinNameCacheValid = true;
+}
+
+QString MainWindow::resolveRealPinName(const QString& displayName) const
+{
+    // ===== OPTIMIZACIÓN: Usar cache O(1) en lugar de búsqueda O(n) =====
+    // Antes: 200 pines × 200 filas = 40,000 iteraciones/update
+    // Ahora: 200 pines × O(1) lookup = 200 operaciones/update
+
+    if (!m_pinNameCacheValid) {
+        rebuildPinNameCache();
+    }
+
+    return m_displayToRealNameCache.value(displayName, displayName);
 }
 
 void MainWindow::renderChipVisualization()
@@ -2679,9 +2866,22 @@ void MainWindow::updateControlPanel(const std::vector<JTAG::PinLevel>& pinLevels
     controlPanel->blockSignals(true);
 
     const auto* deviceModel = scanController->getDeviceModel();
-    auto pinNames = scanController->getPinList(); // Esto devuelve std::string
 
-    for (const auto& pinName : pinNames) {
+    // ===== OPTIMIZACIÓN: Solo iterar sobre pines en el Control Panel =====
+    // Antes: 200+ pines del dispositivo × getPinInfo() = 200+ lookups
+    // Ahora: Solo 5-10 pines observados = 5-10 lookups
+    // Accedemos directamente al QTableWidget interno del ControlPanel
+    QTableWidget* cpTable = controlPanel->findChild<QTableWidget*>();
+    if (!cpTable) {
+        controlPanel->blockSignals(wasBlocked);
+        return;
+    }
+
+    for (int row = 0; row < cpTable->rowCount(); row++) {
+        QTableWidgetItem* nameItem = cpTable->item(row, 0);
+        if (!nameItem) continue;
+
+        std::string pinName = nameItem->text().toStdString();
         auto pinInfo = deviceModel->getPinInfo(pinName);
 
         // Si el pin tiene celda de salida
@@ -2691,13 +2891,11 @@ void MainWindow::updateControlPanel(const std::vector<JTAG::PinLevel>& pinLevels
             // Si el índice es válido
             if (index < pinLevels.size()) {
                 JTAG::PinLevel level = pinLevels[index];
-
-                // CORRECCIÓN: Pasamos 'pinName' directamente (es std::string)
-                // El ControlPanel espera std::string, no QString.
                 controlPanel->updatePinValue(pinName, level);
             }
         }
     }
+    // =====================================================================
 
     // Restauramos señales
     controlPanel->blockSignals(wasBlocked);
@@ -2707,7 +2905,8 @@ void MainWindow::captureWaveformSample(const std::vector<JTAG::PinLevel>& curren
     // ==================== PUNTO DE INTEGRACIÓN 13 ====================
     if (waveformSignals.empty()) return;
 
-    double currentTime = captureTimer.elapsed() / 1000.0; // Convert ms to seconds
+    // Tiempo total = offset acumulado + tiempo actual de esta sesión
+    double currentTime = (captureTimeOffset + captureTimer.elapsed()) / 1000.0;
 
     // ===== OPTIMIZACIÓN MÁXIMA: Acceso directo por índice =====
     // Elimina TODAS las búsquedas, hash lookups y llamadas de función
@@ -2719,12 +2918,13 @@ void MainWindow::captureWaveformSample(const std::vector<JTAG::PinLevel>& curren
             // *** ACCESO DIRECTO A MEMORIA - INSTANTÁNEO ***
             JTAG::PinLevel level = currentPins[sigInfo.dataIndex];
 
-            // Add sample to buffer
-            waveformBuffer[sigInfo.name].push_back({currentTime, level});
+            // ===== OPTIMIZACIÓN: Cachear referencia al buffer (1 lookup en lugar de 3) =====
+            auto& buffer = waveformBuffer[sigInfo.name];
+            buffer.push_back({currentTime, level});
 
             // Maintain circular buffer
-            if (waveformBuffer[sigInfo.name].size() > MAX_WAVEFORM_SAMPLES) {
-                waveformBuffer[sigInfo.name].pop_front();
+            if (buffer.size() > MAX_WAVEFORM_SAMPLES) {
+                buffer.pop_front();
             }
         }
     }
@@ -2827,10 +3027,21 @@ void MainWindow::redrawWaveform()
     int maxY = std::max(40, static_cast<int>(waveformSignals.size() * SIGNAL_HEIGHT));
 
     // ESTRATEGIA CORRECTA: Calcular viewport visible usando scrollbar position
+    // PERO: Si auto-scroll está activo, calcular donde VAMOS a scrollear (no donde estamos)
     QScrollBar* hScrollBar = ui->graphicsViewWaveform->horizontalScrollBar();
-    int scrollPos = (hScrollBar && !isEmpty) ? hScrollBar->value() : 0;  // Sin scroll si vacío
     int viewportWidthPixels = ui->graphicsViewWaveform->viewport()->width();
     if (viewportWidthPixels <= 0) viewportWidthPixels = 800;  // Seguridad
+
+    int scrollPos;
+    if (isCapturing && isAutoScrollEnabled && maxTime > 0) {
+        // Predecir posición de auto-scroll para dibujar labels en la zona correcta
+        int targetX = static_cast<int>(maxTime * PIXELS_PER_SECOND);
+        scrollPos = targetX - static_cast<int>(viewportWidthPixels * 0.8);
+        if (scrollPos < 0) scrollPos = 0;
+    } else {
+        // Usar posición actual del scroll
+        scrollPos = (hScrollBar && !isEmpty) ? hScrollBar->value() : 0;
+    }
 
     // Calcular rango visible en PIXELS (posición de la escena)
     int visibleStartX = scrollPos;
@@ -2922,21 +3133,38 @@ void MainWindow::redrawWaveform()
     QPen gridMajorPen(QColor(180, 180, 180), 1);
     QPen gridMinorPen(QColor(230, 230, 230), 1);
 
-    // Grid MENOR (subdivisiones sin números) - SOLO en rango visible
+    // ===== OPTIMIZACIÓN: Usar QPainterPath para agrupar líneas =====
+    // En lugar de crear cientos de QGraphicsLineItem individuales,
+    // agrupamos todas las líneas del mismo tipo en un solo QPainterPath.
+    // Esto reduce drásticamente el número de objetos gráficos.
+
+    // Grid MENOR - Batch en un solo path
+    QPainterPath minorGridPath;
+    QPainterPath minorTimelinePath;
     for (double t = gridStart; t <= gridEnd; t += gridMinorInterval) {
         if (t < 0) continue;
         int x = static_cast<int>(t * PIXELS_PER_SECOND);
-        waveformScene->addLine(x, 0, x, maxY, gridMinorPen);
-        timelineScene->addLine(x, 0, x, 50, gridMinorPen);
+        minorGridPath.moveTo(x, 0);
+        minorGridPath.lineTo(x, maxY);
+        minorTimelinePath.moveTo(x, 15);  // Ajustado para caber en 30px
+        minorTimelinePath.lineTo(x, 28);
     }
+    waveformScene->addPath(minorGridPath, gridMinorPen);
+    timelineScene->addPath(minorTimelinePath, gridMinorPen);
 
-    // Grid MAYOR (marcas principales) - SOLO en rango visible
+    // Grid MAYOR - Batch en un solo path
+    QPainterPath majorGridPath;
+    QPainterPath majorTimelinePath;
     for (double t = gridStart; t <= gridEnd; t += gridMajorInterval) {
         if (t < 0) continue;
         int x = static_cast<int>(t * PIXELS_PER_SECOND);
-        waveformScene->addLine(x, 0, x, maxY, gridMajorPen);
-        timelineScene->addLine(x, 0, x, 50, gridMajorPen);
+        majorGridPath.moveTo(x, 0);
+        majorGridPath.lineTo(x, maxY);
+        majorTimelinePath.moveTo(x, 15);  // Ajustado para caber en 30px
+        majorTimelinePath.lineTo(x, 28);
     }
+    waveformScene->addPath(majorGridPath, gridMajorPen);
+    timelineScene->addPath(majorTimelinePath, gridMajorPen);
 
     // W8: Dibujar etiquetas de tiempo SOLO en rango visible
     QPen timelinePen(QColor(100, 100, 100));
@@ -2947,8 +3175,8 @@ void MainWindow::redrawWaveform()
 
         int x = static_cast<int>(t * PIXELS_PER_SECOND);
 
-        // Línea vertical de tick más oscura
-        timelineScene->addLine(x, 30, x, 48, timelinePen);
+        // Línea vertical de tick más oscura (ajustado para 30px)
+        timelineScene->addLine(x, 15, x, 28, timelinePen);
 
         // BUG FIX 2: Etiqueta de tiempo con unidad dinámica (soporte para nanosegundos)
         QString timeLabel;
@@ -2963,13 +3191,15 @@ void MainWindow::redrawWaveform()
         }
 
         QGraphicsTextItem *timeText = timelineScene->addText(timeLabel);
-        timeText->setPos(x - 25, 2);
+        // FIX: Asegurar que la etiqueta no quede en coordenadas negativas
+        int labelX = std::max(2, x - 25);  // Mínimo 2px desde el borde izquierdo
+        timeText->setPos(labelX, 2);
         timeText->setDefaultTextColor(QColor(40, 40, 40));
         timeText->setFont(QFont("Arial", 9, QFont::Bold));
     }
 
-    // Línea horizontal base de la timeline
-    timelineScene->addLine(0, 40, maxX, 40, QPen(QColor(150, 150, 150), 2));
+    // Línea horizontal base de la timeline (ajustado para 30px, solo rango visible)
+    timelineScene->addLine(visibleStartX, 28, visibleEndX + 50, 28, QPen(QColor(150, 150, 150), 2));
 
     // Draw each signal
     for (int row = 0; row < waveformSignals.size(); row++) {
@@ -2993,12 +3223,14 @@ void MainWindow::redrawWaveform()
         if (samples.empty()) continue;
 
         // Dibujar líneas de referencia para HIGH y LOW (muy tenues)
+        // OPTIMIZACIÓN: Solo dibujar en el rango visible (no de 0 a maxX)
         QPen referencePen(QColor(230, 230, 230), 1, Qt::DashLine);
-        waveformScene->addLine(0, yHigh, maxX, yHigh, referencePen);  // HIGH level
-        waveformScene->addLine(0, yLow, maxX, yLow, referencePen);    // LOW level
+        waveformScene->addLine(visibleStartX, yHigh, visibleEndX + 50, yHigh, referencePen);  // HIGH level
+        waveformScene->addLine(visibleStartX, yLow, visibleEndX + 50, yLow, referencePen);    // LOW level
 
         // Draw waveform
         QPen signalPen(Qt::blue, 2);
+        QPen zPen(Qt::gray, 2, Qt::DashLine);
 
         // W6: Si solo hay 1 muestra, dibujar punto/marcador
         if (samples.size() == 1) {
@@ -3034,63 +3266,110 @@ void MainWindow::redrawWaveform()
             samples.size()
         );
 
-        // Calcular decimación basada en resolución de pantalla (máximo 1 muestra por píxel)
+        // Calcular decimación basada en resolución de pantalla
         size_t visibleCount = endIdx - startIdx;
         size_t step = 1;
 
         // Obtener ancho del viewport en píxeles
         int viewportWidthPixels = ui->graphicsViewWaveform->viewport()->width();
+        if (viewportWidthPixels <= 0) viewportWidthPixels = 800;
 
-        // Diezmar para renderizar máximo 1 muestra por píxel horizontal
-        if (visibleCount > static_cast<size_t>(viewportWidthPixels)) {
-            step = visibleCount / viewportWidthPixels;
+        // ===== OPTIMIZACIÓN: Diezmado más agresivo (1 muestra cada 2 píxeles) =====
+        // Esto reduce a la mitad los segmentos dibujados sin pérdida visual significativa
+        const size_t PIXELS_PER_SAMPLE = 2;  // Aumentar para más agresividad
+        size_t maxSamples = viewportWidthPixels / PIXELS_PER_SAMPLE;
+        if (maxSamples < 50) maxSamples = 50;  // Mínimo 50 muestras visibles
+
+        if (visibleCount > maxSamples) {
+            step = visibleCount / maxSamples;
             if (step < 1) step = 1;
         }
 
-        // Dibujar solo muestras en el rango visible (con decimación si es necesario)
-        if (step < 1) step = 1; // Seguridad
+        // ===== OPTIMIZACIÓN: Agrupar todas las líneas de la señal en QPainterPath =====
+        QPainterPath signalPath;      // Para líneas normales (HIGH/LOW)
+        QPainterPath highZPath;       // Para líneas HIGH_Z (estilo diferente)
 
-        // CORRECCIÓN: Empezamos en startIdx + step para poder mirar atrás correctamente
-        for (size_t i = startIdx + step; i < endIdx; i += step) {
+        // ===== MIN-MAX DECIMATION para preservar transiciones =====
+        // En lugar de saltar muestras ciegamente, buscamos transiciones dentro del intervalo
+        // Esto garantiza que no perdemos pulsos cortos al hacer zoom out
 
-            // CORRECCIÓN CRÍTICA: Usamos (i - step) en lugar de (i - 1)
-            // Esto conecta el punto anterior del salto con el actual, eliminando los huecos.
-            const auto& samplePrev = samples[i - step];
-            const auto& sampleCurr = samples[i];
+        size_t i = startIdx;
+        JTAG::PinLevel lastDrawnLevel = (i < samples.size()) ? samples[i].level : JTAG::PinLevel::LOW;
+        double lastDrawnX = (i < samples.size()) ? samples[i].timestamp * PIXELS_PER_SECOND : 0;
+        int lastDrawnY = getLevelY(lastDrawnLevel, yBase);
 
-            double x1 = samplePrev.timestamp * PIXELS_PER_SECOND;
-            double x2 = sampleCurr.timestamp * PIXELS_PER_SECOND;
+        while (i < endIdx) {
+            // Definir el intervalo de decimación [i, i+step)
+            size_t intervalEnd = std::min(i + step, endIdx);
 
-            int y1 = getLevelY(samplePrev.level, yBase);
-            int y2 = getLevelY(sampleCurr.level, yBase);
+            // Buscar si hay alguna transición en el intervalo
+            bool hasTransition = false;
+            size_t transitionIdx = i;
+            JTAG::PinLevel currentLevel = samples[i].level;
 
-            // W7: Dibujar con estilo diferente para HIGH_Z
-            if (samplePrev.level == JTAG::PinLevel::HIGH_Z) {
-                QPen zPen(Qt::gray, 2, Qt::DashLine);
-                waveformScene->addLine(x1, y1, x2, y1, zPen);
+            for (size_t j = i; j < intervalEnd; ++j) {
+                if (samples[j].level != currentLevel) {
+                    hasTransition = true;
+                    transitionIdx = j;
+                    break;
+                }
             }
-            else {
-                // Línea horizontal (hold previous level)
-                waveformScene->addLine(x1, y1, x2, y1, signalPen);
+
+            // Determinar qué muestra representará este intervalo
+            size_t representativeIdx;
+            if (hasTransition) {
+                // Si hay transición, usamos el punto de transición (preserva flancos)
+                representativeIdx = transitionIdx;
+            } else {
+                // Sin transición, usamos el último punto del intervalo
+                representativeIdx = intervalEnd - 1;
             }
 
-            // Línea vertical (transición)
-            // Nota: En decimación alta, esto puede dibujar transiciones falsas si nos saltamos pulsos,
-            // pero es necesario para mantener la continuidad visual de la línea.
-            if (y1 != y2) {
-                waveformScene->addLine(x2, y1, x2, y2, signalPen);
+            const auto& sample = samples[representativeIdx];
+            double x2 = sample.timestamp * PIXELS_PER_SECOND;
+            int y2 = getLevelY(sample.level, yBase);
+
+            // Dibujar línea horizontal desde último punto hasta aquí
+            if (lastDrawnLevel == JTAG::PinLevel::HIGH_Z) {
+                highZPath.moveTo(lastDrawnX, lastDrawnY);
+                highZPath.lineTo(x2, lastDrawnY);
+            } else {
+                signalPath.moveTo(lastDrawnX, lastDrawnY);
+                signalPath.lineTo(x2, lastDrawnY);
             }
+
+            // Dibujar transición vertical si cambió el nivel
+            if (lastDrawnY != y2) {
+                signalPath.moveTo(x2, lastDrawnY);
+                signalPath.lineTo(x2, y2);
+            }
+
+            // Actualizar estado
+            lastDrawnX = x2;
+            lastDrawnY = y2;
+            lastDrawnLevel = sample.level;
+
+            // Avanzar al siguiente intervalo
+            i = intervalEnd;
         }
 
-        // Draw separator line
-        waveformScene->addLine(0, yBase + SIGNAL_HEIGHT, maxX, yBase + SIGNAL_HEIGHT,
+        // Añadir los paths como objetos únicos (mucho más eficiente que cientos de líneas)
+        if (!signalPath.isEmpty()) {
+            waveformScene->addPath(signalPath, signalPen);
+        }
+        if (!highZPath.isEmpty()) {
+            waveformScene->addPath(highZPath, zPen);
+        }
+
+        // Draw separator line (OPTIMIZADO: solo rango visible)
+        waveformScene->addLine(visibleStartX, yBase + SIGNAL_HEIGHT, visibleEndX + 50, yBase + SIGNAL_HEIGHT,
                               QPen(QColor(180, 180, 180)));
     }
 
     // Configurar tamaños de las escenas
     waveformScene->setSceneRect(0, 0, maxX, maxY);
     waveformNamesScene->setSceneRect(0, 0, 150, maxY);
-    timelineScene->setSceneRect(0, 0, maxX, 50);
+    timelineScene->setSceneRect(0, 0, maxX, 30);  // Ajustado a 30px para coincidir con la vista
 
     // Auto-scroll: Seguir el tiempo actual solo cuando está capturando Y auto-scroll habilitado
     if (isCapturing && isAutoScrollEnabled && maxTime > 0) {
@@ -3190,15 +3469,18 @@ void MainWindow::onPinsDataReady(std::shared_ptr<const std::vector<JTAG::PinLeve
         sampleCounter = 0;
     }
 
-    // 1. Actualizar tabla de pines
-    updatePinsTable();
+    // ===== THROTTLED UPDATES =====
+    // Guardar datos y marcar para actualización (el timer se encarga del render)
+    m_latestPinsData = pins;  // shared_ptr, no copia
+    m_pinsTableNeedsRedraw = true;
 
-    // 2. Actualizar Control Panel
-    updateControlPanel(pinsRef);
-
-    // 3. Capturar muestra para waveform
-    if (ui->dockWaveform->isVisible()) {
-        captureWaveformSample(pinsRef);
+    // ===== BATCHING: Acumular muestras para waveform (procesadas en timer) =====
+    // En lugar de llamar captureWaveformSample() 100 veces/s, acumulamos y procesamos en batch
+    if (ui->dockWaveform->isVisible() && !waveformSignals.empty()) {
+        // Tiempo total = offset acumulado + tiempo actual de esta sesión
+        double currentTime = (captureTimeOffset + captureTimer.elapsed()) / 1000.0;
+        m_pendingSamples.push_back({currentTime, pinsRef});  // Copia rápida al buffer
+        m_waveformNeedsRedraw = true;
     }
 }
 
@@ -3930,6 +4212,9 @@ void MainWindow::resetProjectState()
     isRedrawing = false;
     m_waveformNeedsRedraw = false;
     m_chipVisNeedsRedraw = false;
+    m_pinsTableNeedsRedraw = false;
+    m_latestPinsData = nullptr;
+    m_pendingSamples.clear();  // Limpiar batch de muestras pendientes
     sampleCounter = 0;
 
     // Resetear modo JTAG a SAMPLE por defecto
@@ -3958,6 +4243,7 @@ void MainWindow::resetProjectState()
     }
 
     // Invalidar timer de captura
+    captureTimeOffset = 0;
     captureTimer.invalidate();
 
     // ========================================================================
@@ -3966,6 +4252,7 @@ void MainWindow::resetProjectState()
     ui->tableWidgetPins->blockSignals(true);
     ui->tableWidgetPins->setRowCount(0);
     ui->tableWidgetPins->blockSignals(false);
+    invalidatePinNameCache();  // Invalidar cache de nombres
 
     // Limpiar combo de dispositivos
     ui->comboBoxDevice->clear();

@@ -32,6 +32,9 @@
     </property>
     <item>
      <widget class="QGraphicsView" name="graphicsView">
+      <property name="enabled">
+       <bool>false</bool>
+      </property>
       <property name="styleSheet">
        <string notr="true">background-color: rgb(255, 255, 255);</string>
       </property>
@@ -477,6 +480,8 @@ QToolButton {
        <addaction name="actionWaveFit"/>
        <addaction name="separator"/>
        <addaction name="actionWaveGoto"/>
+       <addaction name="separator"/>
+       <addaction name="actionWaveRestartTime"/>
       </widget>
      </item>
      <item>
@@ -723,6 +728,14 @@ QHeaderView::section {
     <string>Go To</string>
    </property>
   </action>
+  <action name="actionWaveRestartTime">
+   <property name="text">
+    <string>⏱ T=0</string>
+   </property>
+   <property name="toolTip">
+    <string>Clear data and restart time from 0</string>
+   </property>
+  </action>
   <action name="actionJTAG_Connection">
    <property name="text">
     <string>JTAG Connection...</string>
@@ -762,6 +775,12 @@ QHeaderView::section {
   <action name="actionEdit_Pin_Names_and_Buses">
    <property name="text">
     <string>Edit Pin Names</string>
+   </property>
+   <property name="autoRepeat">
+    <bool>false</bool>
+   </property>
+   <property name="visible">
+    <bool>false</bool>
    </property>
   </action>
   <action name="actionSet_to_0">

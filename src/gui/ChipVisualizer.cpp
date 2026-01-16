@@ -325,10 +325,10 @@ void ChipVisualizer::updatePinName(const QString& oldName, const QString& newNam
         // Actualizar el nombre y label visual del pin
         pin->setPinName(newName);
 
-        // Actualizar el tooltip
-        QString currentTooltip = pin->toolTip();
-        QString number = currentTooltip.section('(', 1, 1).section(')', 0, 0);
-        pin->setToolTip(QString("%1 (%2)").arg(newName).arg(number));
+        // Actualizar el tooltip usando datos almacenados
+        QString number = pin->data(0).toString();
+        QString type = pin->data(1).toString();
+        pin->setToolTip(QString("%1 (%2)\nType: %3").arg(newName).arg(number).arg(type));
     }
 }
 
@@ -415,8 +415,12 @@ void ChipVisualizer::addPin(const QString& name, const QString& number, double x
         break;
     }
 
-    // Tooltip con nombre + pin físico: "PA0 (A1)"
-    pin->setToolTip(QString("%1 (%2)").arg(name).arg(number));
+    // Tooltip con nombre + pin físico + tipo: "PA0 (A1)\nType: INPUT"
+    pin->setToolTip(QString("%1 (%2)\nType: %3").arg(name).arg(number).arg(type));
+
+    // Guardar número y tipo como datos para updatePinName()
+    pin->setData(0, number);  // Qt::UserRole para número
+    pin->setData(1, type);    // Qt::UserRole+1 para tipo
 
     m_scene->addItem(pin);
     m_pins[name] = pin;  // Key por NOMBRE (para buscar desde tabla)

@@ -12,6 +12,7 @@
 #include <memory>
 #include <deque>
 #include <map>
+#include <unordered_map>
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -131,6 +132,7 @@ private slots:
     void onWaveZoomOut();
     void onWaveFit();
     void onWaveGoto();
+    void onWaveRestartTime();  // Clear data and restart time from 0
 
     // NUEVOS slots para recibir datos del worker
     // FASE 2: shared_ptr evita copias innecesarias del vector completo
@@ -227,8 +229,9 @@ private:
         double timestamp;        // Seconds since capture start
         JTAG::PinLevel level;
     };
-    std::map<std::string, std::deque<WaveformSample>> waveformBuffer;
+    std::unordered_map<std::string, std::deque<WaveformSample>> waveformBuffer;  // O(1) lookup
     QElapsedTimer captureTimer;
+    qint64 captureTimeOffset = 0;  // Acumula tiempo de sesiones anteriores (ms) para pause/resume
     const size_t MAX_WAVEFORM_SAMPLES = 10000;  // Circular buffer limit
 
     // Performance settings
@@ -260,6 +263,28 @@ private:
 
     // Buffer de cambios pendientes del chip visualizer (solo último estado por pin)
     std::map<QString, VisualPinState> m_pendingChipVisUpdates;
+
+    QTimer* m_pinsTableRenderTimer;     // Timer @ configurable FPS para tabla de pines
+    bool m_pinsTableNeedsRedraw;        // Bandera dirty para redraw pendiente
+
+    // Buffer de últimos datos de pines recibidos (para throttled update)
+    std::shared_ptr<const std::vector<JTAG::PinLevel>> m_latestPinsData;
+
+    // ===== BATCHING: Acumular muestras para procesamiento en lotes =====
+    struct PinsSample {
+        double timestamp;
+        std::vector<JTAG::PinLevel> pins;
+    };
+    std::vector<PinsSample> m_pendingSamples;  // Buffer de muestras pendientes
+    // ===================================================================
+
+    // ===== CACHE: displayName → realName para evitar O(n) búsquedas =====
+    // Se invalida cuando cambia la estructura de la tabla
+    mutable QHash<QString, QString> m_displayToRealNameCache;
+    mutable bool m_pinNameCacheValid = false;
+    void invalidatePinNameCache() { m_pinNameCacheValid = false; m_displayToRealNameCache.clear(); }
+    void rebuildPinNameCache() const;
+    // ===================================================================
     // ================================================================
 
     // ============================================================
