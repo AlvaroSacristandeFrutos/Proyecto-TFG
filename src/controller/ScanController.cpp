@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <memory>
 #include <QDebug>
+#include <QCoreApplication>
 
 namespace JTAG {
 
@@ -139,18 +140,41 @@ namespace JTAG {
     }
 
     void ScanController::unloadBSDL() {
-        // Detener polling si está activo
+        std::cout << "[ScanController] Unloading BSDL and resetting state...\n";
+
+        // 1. Detener el polling (esto espera a que el hilo termine con wait())
         stopPolling();
 
-        // Limpiar el modelo del dispositivo, engine e IDCODE del target
-        // Mantener SOLO el adaptador (sonda) conectado
+        // 2. Desconectar y eliminar el worker
+        if (scanWorker) {
+            // Desconectar TODAS las conexiones del worker (tanto entrada como salida)
+            scanWorker->disconnect();  // Desconecta todas las señales FROM scanWorker
+
+            // Desconectar conexión workerThread -> scanWorker (started -> run)
+            if (workerThread) {
+                disconnect(workerThread, &QThread::started, scanWorker, &ScanWorker::run);
+            }
+
+            delete scanWorker;
+            scanWorker = nullptr;
+        }
+
+        // 3. Borrar modelo y motor
+        // El orden es importante: engine depende de adapter, model es independiente
         engine.reset();
         deviceModel.reset();
-        initialized = false;
-        detectedIDCODE = 0;  // Limpiar IDCODE del target
 
-        // NO tocar: adapter (la sonda sigue conectada)
-        std::cout << "[ScanController] BSDL unloaded - adapter still connected\n";
+        initialized = false;
+        detectedIDCODE = 0;
+
+        // 4. Purgar eventos pendientes en la cola de Qt
+        // Esto procesa y descarta cualquier señal 'pinsUpdated' que haya quedado
+        // huérfana antes de que carguemos el nuevo proyecto.
+        // Como scanWorker ya es null y deviceModel es null, nuestros guards o
+        // la falta de conexión evitarán problemas.
+        QCoreApplication::processEvents();
+
+        std::cout << "[ScanController] Hard Reset complete: Worker deleted, Model unloaded.\n";
     }
 
     bool ScanController::isConnected() const {
@@ -224,6 +248,12 @@ namespace JTAG {
 
     bool ScanController::initialize() {
         std::cout << "[ScanController] initialize: Starting device initialization...\n";
+
+        // GUARD: Si ya está inicializado, no crear duplicados del worker
+        if (initialized && scanWorker) {
+            std::cout << "[ScanController] Already initialized, skipping re-initialization\n";
+            return true;
+        }
 
         if (!adapter || !deviceModel || !engine) {
             std::cerr << "[ScanController] ERROR: Missing components - adapter:" << (adapter ? "OK" : "NULL")
@@ -412,7 +442,10 @@ namespace JTAG {
     }
 
     bool ScanController::enterSAMPLE() {
-        if (!initialize()) return false; // Asegura que BSDL esté cargado
+        // CORRECCIÓN: No llamar initialize() si ya está inicializado
+        // (enterEXTEST/INTEST/BYPASS ya seguían este patrón)
+        if (!engine || !deviceModel) return false;
+
         // SAMPLE/PRELOAD suele ser la instrucción segura por defecto
         uint32_t opcode = deviceModel->getInstruction("SAMPLE");
         if (opcode == 0xFFFFFFFF) opcode = deviceModel->getInstruction("SAMPLE/PRELOAD");
@@ -623,12 +656,27 @@ namespace JTAG {
     // Slot para recibir datos del worker
     // FASE 2: Recibe shared_ptr, NO hace copia, solo re-emite el puntero
     void ScanController::onPinsUpdated(std::shared_ptr<const std::vector<PinLevel>> pins) {
-        qDebug() << "[ScanController::onPinsUpdated] Received" << pins->size() << "pins from worker (shared_ptr)";
-        // Actualizar cache local si es necesario
-        // Reemitir señal para la GUI (esto hace que MainWindow la reciba)
-        // NO COPIA: solo incrementa refcount del shared_ptr
+        // Si el modelo no existe, imposible procesar
+        if (!deviceModel) return;
+
+        // DIAGNÓSTICO: Si initialized es false, avisa
+        if (!initialized) {
+            qWarning() << "[ScanController] Ignored packet: Controller NOT initialized";
+            return;
+        }
+
+        // CHECK DE INTEGRIDAD:
+        size_t expected = deviceModel->getBSRLength();
+        if (pins->size() != expected) {
+            // Solo descartar si la diferencia no es 0 (vector vacío es posible al inicio)
+            if (pins->size() > 0) {
+                qWarning() << "[ScanController] ZOMBIE/MISMATCH detected. Received:"
+                    << pins->size() << " Expected:" << expected;
+            }
+            return;
+        }
+
         emit pinsDataReady(pins);
-        qDebug() << "[ScanController::onPinsUpdated] Signal pinsDataReady emitted";
     }
 
     void ScanController::onWorkerError(QString message) {

@@ -9,6 +9,7 @@
 #include <QSpinBox>
 #include <QLineEdit>
 #include <QGroupBox>
+#include <QPushButton>
 
 class PackageTypePage : public QWizardPage {
     Q_OBJECT
@@ -53,9 +54,19 @@ public:
     int getVerticalPins() const;
     QString getDeviceName() const;
 
+    // Indica si el usuario eligió cargar un proyecto existente
+    bool wantsToLoadProject() const { return m_loadProjectRequested; }
+
+signals:
+    void loadProjectRequested();
+
+private slots:
+    void onLoadProjectClicked();
+
 private:
     PackageTypePage* m_packagePage;
     uint32_t m_idcode;
+    bool m_loadProjectRequested = false;
 };
 
 #endif // NEWPROJECTWIZARD_H

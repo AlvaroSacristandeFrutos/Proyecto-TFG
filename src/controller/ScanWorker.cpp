@@ -92,21 +92,41 @@ namespace JTAG {
         ScanMode lastMode = ScanMode::SAMPLE;
         bool firstRun = true;
 
-        // ===== OPTIMIZACIÓN: Mover vector FUERA del loop =====
-        // Evita malloc/free en cada iteración (hot path)
-        // Con 200 pines @ 50Hz = 10,000 allocations/sec → 0 allocations
+        // Vector para almacenar pines (se redimensiona dinámicamente con protección)
         std::vector<PinLevel> pins;
-        if (deviceModel) {
-            pins.reserve(deviceModel->getBSRLength());
-        }
-        // =====================================================
+        size_t lastKnownBsrLength = 0;
 
         while (running) {
             try {
-                if (!deviceModel) {
+                // Verificar que tenemos modelo válido
+                if (!deviceModel || !engine) {
                     QThread::msleep(50);
                     continue;
                 }
+
+                // ===== SANITY CHECK: Verificar BSR length válido =====
+                size_t currentBsrLength = engine->getBSRLength();
+
+                // Protección contra valores basura (límite razonable: 10000 bits)
+                if (currentBsrLength == 0 || currentBsrLength > 10000) {
+                    QThread::msleep(50);
+                    continue;  // Modelo no inicializado o valor inválido
+                }
+
+                // Redimensionar vector si cambió el tamaño del BSR
+                if (currentBsrLength != lastKnownBsrLength) {
+                    try {
+                        pins.clear();
+                        pins.reserve(currentBsrLength);
+                        lastKnownBsrLength = currentBsrLength;
+                        qDebug() << "[ScanWorker] BSR buffer resized to" << currentBsrLength;
+                    } catch (const std::exception& e) {
+                        qDebug() << "[ScanWorker] ERROR reserving memory:" << e.what();
+                        QThread::msleep(100);
+                        continue;
+                    }
+                }
+                // =====================================================
 
                 ScanMode targetMode = currentMode.load();
 
@@ -185,11 +205,10 @@ namespace JTAG {
                 }
 
                 // 3. ACTUALIZAR GUI
-                if (targetMode != ScanMode::BYPASS) {
-                    size_t bsrLen = engine->getBSRLength();
-                    pins.resize(bsrLen);
+                if (targetMode != ScanMode::BYPASS && lastKnownBsrLength > 0) {
+                    pins.resize(lastKnownBsrLength);
 
-                    for (size_t i = 0; i < bsrLen; ++i) {
+                    for (size_t i = 0; i < lastKnownBsrLength; ++i) {
                         auto level = (targetMode == ScanMode::EXTEST || targetMode == ScanMode::INTEST)
                             ? engine->getPin(i)
                             : engine->getPinReadback(i);
@@ -197,7 +216,8 @@ namespace JTAG {
                         pins[i] = level.value_or(PinLevel::HIGH_Z);
                     }
 
-                    auto pinsPtr = std::make_shared<const std::vector<PinLevel>>(std::move(pins));
+                    // Emitir copia, no mover (para mantener el vector reutilizable)
+                    auto pinsPtr = std::make_shared<const std::vector<PinLevel>>(pins);
                     emit pinsUpdated(pinsPtr);
                 }
 

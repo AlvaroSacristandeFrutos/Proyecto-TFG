@@ -1,6 +1,7 @@
 #include "NewProjectWizard.h"
-#include <QFormLayout> // Necesario para organizar los inputs
+#include <QFormLayout>
 #include <QGroupBox>
+#include <QFrame>
 
 // ========== PackageTypePage ==========
 PackageTypePage::PackageTypePage(uint32_t idcode, QWidget* parent)
@@ -103,6 +104,38 @@ PackageTypePage::PackageTypePage(uint32_t idcode, QWidget* parent)
     layout->addWidget(m_dimGroup);
     layout->addStretch();
 
+    // ========== LOAD EXISTING PROJECT SECTION ==========
+    QFrame* separator = new QFrame(this);
+    separator->setFrameShape(QFrame::HLine);
+    separator->setFrameShadow(QFrame::Sunken);
+    layout->addWidget(separator);
+
+    QLabel* orLabel = new QLabel("— OR —", this);
+    orLabel->setAlignment(Qt::AlignCenter);
+    orLabel->setStyleSheet("color: gray; font-size: 10pt; margin: 5px;");
+    layout->addWidget(orLabel);
+
+    QPushButton* loadProjectBtn = new QPushButton("📂 Load Existing Project...", this);
+    loadProjectBtn->setStyleSheet(
+        "QPushButton { "
+        "   background-color: #f0f0f0; "
+        "   border: 1px solid #ccc; "
+        "   border-radius: 5px; "
+        "   padding: 10px 20px; "
+        "   font-size: 11pt; "
+        "} "
+        "QPushButton:hover { "
+        "   background-color: #e0e0e0; "
+        "   border-color: #999; "
+        "}"
+    );
+    loadProjectBtn->setToolTip("Open a previously saved project file (.jsqp)");
+    layout->addWidget(loadProjectBtn);
+
+    // Conectar botón al wizard padre (se conecta en el constructor del wizard)
+    loadProjectBtn->setObjectName("loadProjectButton");
+    // ===================================================
+
     // Conectar señales para ocultar/mostrar dimGroup
     connect(m_edgePinsRadio, &QRadioButton::toggled, this, &PackageTypePage::onPackageTypeChanged);
     connect(m_centerPinsRadio, &QRadioButton::toggled, this, &PackageTypePage::onPackageTypeChanged);
@@ -134,14 +167,27 @@ QString PackageTypePage::getDeviceName() const {
 
 // ========== NewProjectWizard ==========
 NewProjectWizard::NewProjectWizard(uint32_t idcode, QWidget* parent)
-    : QWizard(parent), m_idcode(idcode)
+    : QWizard(parent), m_idcode(idcode), m_loadProjectRequested(false)
 {
     setWindowTitle("New Project Wizard");
     m_packagePage = new PackageTypePage(idcode, this);
     addPage(m_packagePage);
     setButtonText(QWizard::FinishButton, "Next: Load BSDL");
-    setMinimumSize(700, 700);
-    resize(750, 750);
+    setMinimumSize(700, 780);
+    resize(800, 780);
+
+    // Conectar el botón "Load Project" de la página al slot del wizard
+    QPushButton* loadBtn = m_packagePage->findChild<QPushButton*>("loadProjectButton");
+    if (loadBtn) {
+        connect(loadBtn, &QPushButton::clicked, this, &NewProjectWizard::onLoadProjectClicked);
+    }
+}
+
+void NewProjectWizard::onLoadProjectClicked()
+{
+    m_loadProjectRequested = true;
+    emit loadProjectRequested();
+    reject();  // Cerrar el wizard
 }
 
 PackageTypePage::PackageType NewProjectWizard::getPackageType() const {

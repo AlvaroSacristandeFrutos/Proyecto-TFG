@@ -84,7 +84,7 @@ private:
 };
 
 /**
- * @brief Chip visualization widget (TopJTAG style)
+ * @brief Chip visualization widget
  */
 class ChipVisualizer : public QGraphicsView {
     Q_OBJECT
@@ -96,7 +96,12 @@ public:
     void updatePinStates(const QList<PinState>& states);
     void clearPins();
     void setPackageType(const QString& packageType);
+    QString getPackageType() const { return m_packageType; }
     void updatePinName(const QString& oldName, const QString& newName);
+
+    // Getters para dimensiones del chip
+    double getChipWidth() const { return m_chipWidth; }
+    double getChipHeight() const { return m_chipHeight; }
 
     // --- ESTA ERA LA FUNCI�N QUE FALTABA DECLARAR ---
     void createLayoutFromController(const std::vector<std::string>& pins);
@@ -138,6 +143,7 @@ private:
     double m_chipWidth;
     double m_chipHeight;
 
+
     // NUEVO: Helpers para layout real
     ParsedPin parsePinNumber(const QString& pinNumber);
     PinSide determineSide(int row, int col, int maxRow, int maxCol);
@@ -146,7 +152,8 @@ private:
     QGraphicsScene* m_scene;
     QGraphicsRectItem* m_chipBody;
     QMap<QString, PinGraphicsItem*> m_pins;
-    QString m_packageType;
+    QString m_packageType = "CENTER_PINS";
+
 
     enum class LayoutMode {
         CENTER_GRID,  // BGA (actual)

@@ -878,3 +878,4 @@ void ChipVisualizer::renderPlaceholder(uint32_t idcode) {
     setSceneRect(m_scene->itemsBoundingRect().adjusted(-50, -50, 50, 50));
     fitInView(sceneRect(), Qt::KeepAspectRatio);
 }
+

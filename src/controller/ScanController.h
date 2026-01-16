@@ -34,7 +34,7 @@ namespace JTAG {
         bool connectAdapter(AdapterType type, uint32_t clockSpeed = 1000000);
         bool connectAdapter(const AdapterDescriptor& descriptor, uint32_t clockSpeed);
         void disconnectAdapter();
-        void unloadBSDL();  // NUEVO: Descarga solo el BSDL sin desconectar el adaptador
+        void unloadBSDL();  // Descarga solo el BSDL sin desconectar el adaptador
         bool isConnected() const;
         std::string getAdapterInfo() const;
 

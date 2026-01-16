@@ -1,0 +1,76 @@
+{
+    "bsdlFile": "tp1_laRVa4.bsdl",
+    "chipDimensions": {
+        "height": 400,
+        "width": 300
+    },
+    "chipVisualizerZoom": 0.6984667802385008,
+    "customPinNames": {
+        "P1": "CLKIN",
+        "P10": "LORA_DIO1",
+        "P11": "L_RX",
+        "P110": "LORA_MOSI",
+        "P113": "LORA_MISO",
+        "P115": "LORA_SCK",
+        "P117": "LORA_CS",
+        "P119": "LORA_RESET",
+        "P12": "L_TX",
+        "P121": "TXD2",
+        "P122": "RXD2",
+        "P13": "ICE_LED1",
+        "P14": "ICE_LED2",
+        "P15": "ICE_LED33",
+        "P16": "ICE_LED4",
+        "P17": "EN_5V_UP",
+        "P18": "EN_5V_M4",
+        "P19": "EN_1V4_M4",
+        "P2": "ICE_SCK",
+        "P20": "M2_ON_OFF",
+        "P3": "ICE_MOSI",
+        "P30": "TCK",
+        "P31": "TMS",
+        "P32": "TDI",
+        "P33": "TDO",
+        "P4": "ICE_MISO",
+        "P49": "RXD1",
+        "P5": "BME680_CS",
+        "P52": "TXD1",
+        "P6": "ADC_CS",
+        "P7": "LORA_BUSY",
+        "P8": "RXD",
+        "P9": "TXD"
+    },
+    "deviceName": "LarVa",
+    "jtagMode": "SAMPLE",
+    "layout": {
+        "geometry": "AdnQywADAAAAAAAA////+QAABf8AAAM3AAAABwAAABoAAAS2AAADNgAAAAACAAAABgAAAAAAAAAAFwAABf8AAAM3",
+        "pinsTableColumnWidths": [
+            120,
+            60,
+            80,
+            80,
+            120
+        ],
+        "windowState": "AAAA/wAAAAD9AAAAAwAAAAAAAAIIAAABoPwCAAAAAfsAAAAQAGQAbwBjAGsAUABpAG4AcwEAAAAyAAABoAAAAMgA////AAAAAQAAAcsAAAGg/AIAAAAB+wAAABIAZABvAGMAawBXAGEAdABjAGgAAAAAMgAAAaAAAADIAP///wAAAAMAAAYAAAABNvwBAAAAAfsAAAAYAGQAbwBjAGsAVwBhAHYAZQBmAG8AcgBtAQAAAAAAAAYAAAAB9gD///8AAAP0AAABoAAAAAQAAAAEAAAACAAAAAj8AAAAAQAAAAIAAAABAAAADgB0AG8AbwBsAEIAYQByAQAAAAD/////AAAAAAAAAAA="
+    },
+    "packageType": "EDGE",
+    "projectVersion": "1.0",
+    "settings": {
+        "chipVisFPS": 10,
+        "pollingInterval": 33,
+        "sampleDecimation": 1,
+        "samplesPerSecond": 30,
+        "waveformFPS": 1
+    },
+    "timestamp": "2026-01-15T18:37:51",
+    "waveform": {
+        "autoScrollEnabled": true,
+        "scrollPosition": 289,
+        "signals": [
+            "ICE_LED1",
+            "ICE_LED2",
+            "ICE_LED33"
+        ],
+        "timebase": 1
+    }
+}

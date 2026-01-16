@@ -76,9 +76,9 @@ namespace JTAG {
         // Método común para scanDR + captura (evita duplicación entre applyChanges/samplePins)
         bool scanAndCapture(bool updateWriteBuffer);
 
-        IJTAGAdapter* adapter;
-        TAPState currentState;
-        size_t bsrLength;
+        IJTAGAdapter* adapter = nullptr;
+        TAPState currentState = TAPState::TEST_LOGIC_RESET;
+        size_t bsrLength = 0;  // CRÍTICO: Inicializar a 0 para evitar basura
 
         // Buffer TDI (Write): Mantiene el estado "deseado" que queremos escribir
         std::vector<uint8_t> bsr;

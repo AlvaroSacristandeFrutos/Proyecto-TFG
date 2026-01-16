@@ -14,6 +14,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <filesystem>
 
 #include "ChipVisualizer.h"
 #include "ControlPanelWidget.h"
@@ -292,6 +293,7 @@ private:
     void updateStatusBar(const QString &message);
 
     // Project management helpers
+    void resetProjectState();  // Limpia todo el estado del proyecto actual
     bool saveProjectToJson(const QString &filePath);
     bool loadProjectFromJson(const QString &filePath);
     QString makePathRelative(const QString &absolutePath, const QString &basePath) const;
@@ -321,6 +323,9 @@ private:
 
     // Mode validation helper
     bool isEditingModeActive();
+
+
+
 };
 
 #endif // MAINWINDOW_H

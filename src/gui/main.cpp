@@ -1,9 +1,9 @@
 /**
  * @file main.cpp
- * @brief Punto de entrada principal de la aplicación TopJTAG Probe
+ * @brief Punto de entrada principal de la aplicación JtagScannerQt_UVa
  *
  * Este archivo contiene la función main() que inicializa la aplicación Qt
- * y crea la ventana principal del Boundary Scanner JTAG.
+ * y crea la ventana principal del JTAG Boundary Scanner.
  */
 
 #include "mainwindow.h"
@@ -36,8 +36,8 @@ int main(int argc, char *argv[])
 
     // Configurar metadata de la aplicación
     // Esta información se usa en diálogos "About", configuraciones, etc.
-    app.setApplicationName("BoundaryScanner");
-    app.setOrganizationName("UVa");
+    app.setApplicationName("JtagScannerQt_UVa");
+    app.setOrganizationName("Universidad de Valladolid");
     app.setApplicationVersion("1.0.0");
 
     // Crear y mostrar la ventana principal
