@@ -1,6 +1,6 @@
 #include "ScanWorker.h"
 #include <QThread>
-#include <QDebug>
+#include "utils/Log.h"
 
 namespace JTAG {
 
@@ -37,7 +37,7 @@ namespace JTAG {
 
     void ScanWorker::forceReloadInstruction() {
         forceReload = true;
-        qDebug() << "[ScanWorker] Force reload instruction requested";
+        LOG_INFO("[ScanWorker] Force reload instruction requested");
     }
 
     void ScanWorker::setScanMode(ScanMode mode) {
@@ -87,7 +87,7 @@ namespace JTAG {
     // LÓGICA PRINCIPAL DEL HILO
     // --------------------------------------------------------------------------
     void ScanWorker::run() {
-        qDebug() << "[ScanWorker] Thread started";
+        LOG_INFO("[ScanWorker] Thread started");
 
         ScanMode lastMode = ScanMode::SAMPLE;
         bool firstRun = true;
@@ -119,9 +119,9 @@ namespace JTAG {
                         pins.clear();
                         pins.reserve(currentBsrLength);
                         lastKnownBsrLength = currentBsrLength;
-                        qDebug() << "[ScanWorker] BSR buffer resized to" << currentBsrLength;
+                        LOG_DEBUG("[ScanWorker] BSR buffer resized to" << currentBsrLength);
                     } catch (const std::exception& e) {
-                        qDebug() << "[ScanWorker] ERROR reserving memory:" << e.what();
+                        LOG_ERROR("[ScanWorker] Reserving memory:" << e.what());
                         QThread::msleep(100);
                         continue;
                     }
@@ -170,17 +170,17 @@ namespace JTAG {
 
                     // Cargar la instrucción
                     if (!engine->loadInstruction(opcode, irLen)) {
-                        qDebug() << "[ScanWorker] Failed to load instruction:" << QString::fromStdString(instrName);
+                        LOG_WARNING("[ScanWorker] Failed to load instruction:" << QString::fromStdString(instrName));
                     } else {
-                        qDebug() << "[ScanWorker] Loaded instruction:" << QString::fromStdString(instrName);
+                        LOG_INFO("[ScanWorker] Loaded instruction:" << QString::fromStdString(instrName));
 
                         // IEEE 1149.1: En EXTEST/INTEST, ejecutar UPDATE-DR inicial
                         // Esto "congela" el chip inmediatamente con el estado actual del BSR
                         if (targetMode == ScanMode::EXTEST || targetMode == ScanMode::INTEST) {
                             if (!engine->applyChanges()) {
-                                qDebug() << "[ScanWorker] WARNING: Failed to apply initial UPDATE-DR for" << QString::fromStdString(instrName);
+                                LOG_WARNING("[ScanWorker] Failed to apply initial UPDATE-DR for" << QString::fromStdString(instrName));
                             } else {
-                                qDebug() << "[ScanWorker] Applied initial UPDATE-DR -" << QString::fromStdString(instrName) << "now active";
+                                LOG_DEBUG("[ScanWorker] Applied initial UPDATE-DR -" << QString::fromStdString(instrName) << "now active");
                             }
                         }
                     }
@@ -223,7 +223,7 @@ namespace JTAG {
 
                 // Single-shot auto-stop
                 if (targetMode == ScanMode::SAMPLE_SINGLE_SHOT) {
-                    qDebug() << "[ScanWorker] Single-shot capture complete, stopping";
+                    LOG_INFO("[ScanWorker] Single-shot capture complete, stopping");
                     running = false;
                     emit stopped();
                 }
@@ -236,7 +236,7 @@ namespace JTAG {
             QThread::msleep(pollIntervalMs);
         }
 
-        qDebug() << "[ScanWorker] Thread stopped";
+        LOG_INFO("[ScanWorker] Thread stopped");
     } // <--- ESTA LLAVE CIERRA LA FUNCIÓN RUN()
 
     // --------------------------------------------------------------------------
@@ -246,15 +246,13 @@ namespace JTAG {
     void ScanWorker::processDirtyPins() {
         std::lock_guard<std::mutex> lock(dirtyMutex);
 
-        // DEBUG: Mostrar cuántos cambios hay en la queue
-        qDebug() << "[ScanWorker::processDirtyPins] Queue size:" << dirtyPins.size();
+        LOG_VERBOSE("[ScanWorker::processDirtyPins] Queue size:" << dirtyPins.size());
 
         // Procesar TODOS los cambios en orden FIFO
         while (!dirtyPins.empty()) {
             auto [cellIndex, level] = dirtyPins.front();
 
-            // DEBUG: Mostrar qué cambio se está aplicando
-            qDebug() << "  Applying: Cell" << cellIndex << "→" << (level == JTAG::PinLevel::HIGH ? "HIGH" : (level == JTAG::PinLevel::LOW ? "LOW" : "HIGH_Z"));
+            LOG_VERBOSE("  Applying: Cell" << cellIndex << "→" << (level == JTAG::PinLevel::HIGH ? "HIGH" : (level == JTAG::PinLevel::LOW ? "LOW" : "HIGH_Z")));
 
             // setPin() modifica bsr (buffer TDI)
             // Este valor se mantiene automáticamente entre llamadas

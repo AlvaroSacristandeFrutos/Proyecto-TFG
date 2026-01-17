@@ -50,3 +50,27 @@ target_link_libraries(JtagScannerQt PRIVATE Qt6::Widgets Qt6::Core Qt6::Gui Qt6:
 if(UNIX AND NOT APPLE)
     target_link_libraries(JtagScannerQt PRIVATE dl)
 endif()
+
+# --- AUTO-DEPLOYMENT DE DLLs EN WINDOWS ---
+# Ejecuta windeployqt automáticamente después de compilar para copiar
+# las DLLs de Qt necesarias junto al ejecutable (Debug y Release)
+if(WIN32)
+    # Buscar windeployqt en el directorio de Qt
+    get_target_property(_qmake_executable Qt6::qmake IMPORTED_LOCATION)
+    get_filename_component(_qt_bin_dir "${_qmake_executable}" DIRECTORY)
+    find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${_qt_bin_dir}")
+
+    if(WINDEPLOYQT_EXECUTABLE)
+        add_custom_command(TARGET JtagScannerQt POST_BUILD
+            COMMAND "${WINDEPLOYQT_EXECUTABLE}"
+                    --no-translations
+                    --no-system-d3d-compiler
+                    --no-opengl-sw
+                    "$<TARGET_FILE:JtagScannerQt>"
+            COMMENT "Deploying Qt DLLs with windeployqt..."
+        )
+        message(STATUS "windeployqt found: ${WINDEPLOYQT_EXECUTABLE}")
+    else()
+        message(WARNING "windeployqt not found - DLLs won't be auto-deployed")
+    endif()
+endif()

@@ -2,7 +2,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
-#include <QDebug>
+#include "utils/Log.h"
 
 ControlPanelWidget::ControlPanelWidget(QWidget *parent)
     : QWidget(parent)
@@ -159,26 +159,26 @@ void ControlPanelWidget::onRadioButtonToggled(int buttonId, bool checked)
     // y otra para el botón que se marca (checked=true)
     // Solo procesamos cuando checked=true para evitar duplicados
     if (!checked) {
-        qDebug() << "[ControlPanel] Button unchecked, ignoring (buttonId:" << buttonId << ")";
+        LOG_VERBOSE("[ControlPanel] Button unchecked, ignoring (buttonId:" << buttonId << ")");
         return;
     }
 
     // Obtener nombre del pin desde el widget que emitió la señal
     QButtonGroup* group = qobject_cast<QButtonGroup*>(sender());
     if (!group) {
-        qDebug() << "[ControlPanel] ERROR: sender is not QButtonGroup";
+        LOG_ERROR("[ControlPanel] sender is not QButtonGroup");
         return;
     }
 
     QWidget* widget = qobject_cast<QWidget*>(group->parent());
     if (!widget) {
-        qDebug() << "[ControlPanel] ERROR: parent is not QWidget";
+        LOG_ERROR("[ControlPanel] parent is not QWidget");
         return;
     }
 
     QString pinName = widget->property("pinName").toString();
     if (pinName.isEmpty()) {
-        qDebug() << "[ControlPanel] ERROR: pinName property is empty";
+        LOG_ERROR("[ControlPanel] pinName property is empty");
         return;
     }
 
@@ -199,16 +199,16 @@ void ControlPanelWidget::onRadioButtonToggled(int buttonId, bool checked)
             levelStr = "HIGH_Z (Z)";
             break;
         default:
-            qDebug() << "[ControlPanel] ERROR: invalid buttonId" << buttonId;
+            LOG_ERROR("[ControlPanel] invalid buttonId" << buttonId);
             return;
     }
 
-    qDebug() << "[ControlPanel] Radio button toggled - Pin:" << pinName
-             << "Level:" << levelStr << "ButtonId:" << buttonId << "Checked:" << checked;
+    LOG_VERBOSE("[ControlPanel] Radio button toggled - Pin:" << pinName
+             << "Level:" << levelStr << "ButtonId:" << buttonId << "Checked:" << checked);
 
     // Emitir señal (usando QString directamente, no std::string)
     emit pinValueChanged(pinName, level);
-    qDebug() << "[ControlPanel] Signal emitted for pin:" << pinName;
+    LOG_VERBOSE("[ControlPanel] Signal emitted for pin:" << pinName);
 }
 
 int ControlPanelWidget::findPinRow(const std::string& pinName) const
@@ -231,7 +231,7 @@ void ControlPanelWidget::renamePinIfExists(const QString& oldName, const QString
         QTableWidgetItem* nameItem = table->item(row, 0);
         if (nameItem) {
             nameItem->setText(newName);
-            qDebug() << "[ControlPanel] Pin renamed:" << oldName << "->" << newName;
+            LOG_DEBUG("[ControlPanel] Pin renamed:" << oldName << "->" << newName);
         }
     }
 }

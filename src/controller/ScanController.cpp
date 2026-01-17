@@ -1,11 +1,11 @@
 #include "ScanController.h"
 #include "../parser/BSDLParser.h"
 #include "../core/BoundaryScanEngine.h"
+#include "utils/Log.h"
 #include <iostream>
 #include <iomanip>
 #include <algorithm>
 #include <memory>
-#include <QDebug>
 #include <QCoreApplication>
 
 namespace JTAG {
@@ -75,7 +75,7 @@ namespace JTAG {
             // NUEVO: Si es MockAdapter, auto-generar DeviceModel
             if (type == AdapterType::MOCK) {
                 createMockDeviceModel();
-                qDebug() << "[ScanController] MockAdapter connected - auto-generated DeviceModel";
+                LOG_INFO("[ScanController] MockAdapter connected - auto-generated DeviceModel");
             }
 
             return true;
@@ -108,7 +108,7 @@ namespace JTAG {
             // NUEVO: Si es MockAdapter, auto-generar DeviceModel
             if (descriptor.type == AdapterType::MOCK) {
                 createMockDeviceModel();
-                qDebug() << "[ScanController] MockAdapter connected - auto-generated DeviceModel";
+                LOG_INFO("[ScanController] MockAdapter connected - auto-generated DeviceModel");
             }
 
             std::cout << "[ScanController] Connected to: " << descriptor.name
@@ -357,14 +357,14 @@ namespace JTAG {
 
         auto pinInfo = deviceModel->getPinInfo(pinName);
         if (!pinInfo) {
-            qWarning() << "setPin: Pin not found" << QString::fromStdString(pinName);
+            LOG_WARNING("setPin: Pin not found" << QString::fromStdString(pinName));
             return false;
         }
 
         // PROTECCIÓN: Si outputCell es negativo, NO INTENTAR ESCRIBIR
         if (pinInfo->outputCell < 0) {
             // Es un input (como CLKIN), ignoramos la escritura silenciosamente o con aviso debug
-            qDebug() << "[ScanController] Skipping write to input pin:" << QString::fromStdString(pinName);
+            LOG_DEBUG("[ScanController] Skipping write to input pin:" << QString::fromStdString(pinName));
             return false;
         }
 
@@ -606,14 +606,14 @@ namespace JTAG {
     // ============================================================================
 
     void ScanController::startPolling() {
-        qDebug() << "[ScanController::startPolling] Called";
+        LOG_DEBUG("[ScanController::startPolling] Called");
         if (scanWorker && !workerThread->isRunning()) {
-            qDebug() << "[ScanController::startPolling] Starting worker thread";
+            LOG_DEBUG("[ScanController::startPolling] Starting worker thread");
             scanWorker->start();
             workerThread->start();
         } else {
-            qDebug() << "[ScanController::startPolling] SKIPPED - worker:" << (scanWorker != nullptr)
-                     << "running:" << (workerThread ? workerThread->isRunning() : false);
+            LOG_DEBUG("[ScanController::startPolling] SKIPPED - worker:" << (scanWorker != nullptr)
+                     << "running:" << (workerThread ? workerThread->isRunning() : false));
         }
     }
 
@@ -661,7 +661,7 @@ namespace JTAG {
 
         // DIAGNÓSTICO: Si initialized es false, avisa
         if (!initialized) {
-            qWarning() << "[ScanController] Ignored packet: Controller NOT initialized";
+            LOG_WARNING("[ScanController] Ignored packet: Controller NOT initialized");
             return;
         }
 
@@ -670,8 +670,8 @@ namespace JTAG {
         if (pins->size() != expected) {
             // Solo descartar si la diferencia no es 0 (vector vacío es posible al inicio)
             if (pins->size() > 0) {
-                qWarning() << "[ScanController] ZOMBIE/MISMATCH detected. Received:"
-                    << pins->size() << " Expected:" << expected;
+                LOG_WARNING("[ScanController] ZOMBIE/MISMATCH detected. Received:"
+                    << pins->size() << " Expected:" << expected);
             }
             return;
         }
@@ -680,23 +680,23 @@ namespace JTAG {
     }
 
     void ScanController::onWorkerError(QString message) {
-        qWarning() << "Worker error:" << message;
+        LOG_WARNING("Worker error:" << message);
         // Reemitir error para la GUI
         emit errorOccurred(message);
     }
 
     void ScanController::onWorkerStopped() {
-        qDebug() << "[ScanController::onWorkerStopped] Worker stopped (single-shot complete)";
+        LOG_DEBUG("[ScanController::onWorkerStopped] Worker stopped (single-shot complete)");
         // Detener el thread cuando el worker se detiene (para modo single-shot)
         if (workerThread && workerThread->isRunning()) {
             workerThread->quit();
             workerThread->wait();
-            qDebug() << "[ScanController::onWorkerStopped] Thread stopped";
+            LOG_DEBUG("[ScanController::onWorkerStopped] Thread stopped");
         }
     }
 
     void ScanController::createMockDeviceModel() {
-        qDebug() << "[ScanController] Creating mock DeviceModel for MockAdapter";
+        LOG_DEBUG("[ScanController] Creating mock DeviceModel for MockAdapter");
 
         // Crear BSDL data simulado para MockAdapter
         BSDLData mockData;
@@ -740,8 +740,8 @@ namespace JTAG {
         // Configurar IDCODE detectado
         detectedIDCODE = 0x12345678;
 
-        qDebug() << "[ScanController] Created mock DeviceModel with"
-                 << deviceModel->getAllPins().size() << "pins";
+        LOG_INFO("[ScanController] Created mock DeviceModel with"
+                 << deviceModel->getAllPins().size() << "pins");
     }
 
     bool ScanController::isNoTargetDetected() const {
@@ -757,7 +757,7 @@ namespace JTAG {
             bool needsPolling = (mode != ScanMode::BYPASS);
 
             if (needsPolling && workerThread && !workerThread->isRunning()) {
-                qDebug() << "[ScanController] Auto-starting thread for mode:" << static_cast<int>(mode);
+                LOG_DEBUG("[ScanController] Auto-starting thread for mode:" << static_cast<int>(mode));
                 scanWorker->start();
                 workerThread->start();
             }

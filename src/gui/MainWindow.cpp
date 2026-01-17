@@ -74,6 +74,7 @@
 #include "ChainExamineDialog.h"
 #include "NewProjectWizard.h"
 #include "SettingsDialog.h"
+#include "utils/Log.h"
 
 /**
  * @brief Constructor de la ventana principal
@@ -192,7 +193,7 @@ MainWindow::MainWindow(QWidget *parent)
             m_waveformNeedsRedraw = false;
         }
     });
-    qDebug() << "[MainWindow] Waveform render timer configured at" << currentWaveformFPS << "FPS (" << waveformIntervalMs << "ms)";
+    LOG_DEBUG("[MainWindow] Waveform render timer configured at" << currentWaveformFPS << "FPS (" << waveformIntervalMs << "ms)");
     // Timer se inicia automáticamente cuando se añaden señales al waveform
 
     // ChipVisualizer render throttling timer
@@ -211,7 +212,7 @@ MainWindow::MainWindow(QWidget *parent)
         }
     });
     m_chipVisRenderTimer->start();  // Siempre activo
-    qDebug() << "[MainWindow] ChipVisualizer render timer configured at" << currentChipVisFPS << "FPS (" << chipVisIntervalMs << "ms)";
+    LOG_DEBUG("[MainWindow] ChipVisualizer render timer configured at" << currentChipVisFPS << "FPS (" << chipVisIntervalMs << "ms)");
 
     // PinsTable render throttling timer (usa mismo FPS que ChipVisualizer)
     m_pinsTableRenderTimer = new QTimer(this);
@@ -226,7 +227,7 @@ MainWindow::MainWindow(QWidget *parent)
         }
     });
     m_pinsTableRenderTimer->start();  // Siempre activo
-    qDebug() << "[MainWindow] PinsTable render timer configured at" << currentChipVisFPS << "FPS (" << chipVisIntervalMs << "ms)";
+    LOG_DEBUG("[MainWindow] PinsTable render timer configured at" << currentChipVisFPS << "FPS (" << chipVisIntervalMs << "ms)");
     // =========================================================
 
     updateWindowTitle();
@@ -334,9 +335,9 @@ void MainWindow::setupBackend()
     int savedChipVisFPS = settings.value("performance/chipVisFPS", 10).toInt();
     currentChipVisFPS = savedChipVisFPS;
 
-    qDebug() << "[MainWindow] Loaded settings - Samples/s:" << savedSamplesPerSecond
+    LOG_DEBUG("[MainWindow] Loaded settings - Samples/s:" << savedSamplesPerSecond
              << ", Waveform FPS:" << savedWaveformFPS
-             << ", ChipVis FPS:" << savedChipVisFPS;
+             << ", ChipVis FPS:" << savedChipVisFPS);
 }
 
 /**
@@ -825,9 +826,9 @@ void MainWindow::setupConnections()
     if (controlPanel) {
         bool connected = connect(controlPanel, &ControlPanelWidget::pinValueChanged,
                                 this, &MainWindow::onControlPanelPinChanged);
-        qDebug() << "[MainWindow::setupConnections] Control Panel signal connected:" << connected;
+        LOG_DEBUG("[MainWindow::setupConnections] Control Panel signal connected:" << connected);
     } else {
-        qDebug() << "[MainWindow::setupConnections] ERROR: controlPanel is null!";
+        LOG_ERROR("[MainWindow::setupConnections] controlPanel is null!");
     }
 }
 
@@ -932,10 +933,10 @@ void MainWindow::onNewProjectWizard()
         int verticalPins = wizard.getVerticalPins();
         customDeviceName = wizard.getDeviceName();
 
-        qDebug() << "[MainWindow] Wizard config: packageType ="
+        LOG_DEBUG("[MainWindow] Wizard config: packageType ="
                  << (packageType == PackageTypePage::PackageType::EDGE_PINS ? "EDGE_PINS" : "CENTER_PINS")
                  << ", horizontal =" << horizontalPins
-                 << ", vertical =" << verticalPins;
+                 << ", vertical =" << verticalPins);
 
         // 2. Calcular dimensiones del chip según tipo y proporción de pines
         double chipWidth, chipHeight;
@@ -969,21 +970,21 @@ void MainWindow::onNewProjectWizard()
                 if (ratio > 5.0 || ratio < 0.2) {
                     chipWidth = 400.0;
                     chipHeight = 400.0;
-                    qDebug() << "[MainWindow] Pin ratio too extreme (" << ratio
-                             << "), using square chip";
+                    LOG_DEBUG("[MainWindow] Pin ratio too extreme (" << ratio
+                             << "), using square chip");
                 }
                 else {
                     // Proporción razonable → aplicarla
                     chipHeight = 400.0;
                     chipWidth = chipHeight * ratio;
-                    qDebug() << "[MainWindow] Chip dimensions calculated from pin ratio:"
+                    LOG_DEBUG("[MainWindow] Chip dimensions calculated from pin ratio:"
                              << chipWidth << "x" << chipHeight
-                             << "(ratio:" << ratio << ")";
+                             << "(ratio:" << ratio << ")");
                 }
             }
         }
 
-        qDebug() << "[MainWindow] Final chip dimensions:" << chipWidth << "x" << chipHeight;
+        LOG_DEBUG("[MainWindow] Final chip dimensions:" << chipWidth << "x" << chipHeight);
 
         // 3. Configurar Visualizador
         if (packageType == PackageTypePage::PackageType::EDGE_PINS) {
@@ -995,7 +996,7 @@ void MainWindow::onNewProjectWizard()
 
         // Establecer dimensiones y dibujar placeholder INMEDIATAMENTE
         chipVisualizer->setCustomDimensions(chipWidth, chipHeight);
-        qDebug() << "[MainWindow] Dimensions set, rendering placeholder...";
+        LOG_DEBUG("[MainWindow] Dimensions set, rendering placeholder...");
         chipVisualizer->renderPlaceholder(idcode);
 
         updateStatusBar("Project settings updated. Waiting for BSDL...");
@@ -1133,7 +1134,7 @@ void MainWindow::onWaveformFPSChanged(int fps)
     if (m_waveformRenderTimer) {
         int intervalMs = 1000 / fps;
         m_waveformRenderTimer->setInterval(intervalMs);
-        qDebug() << "[MainWindow] Waveform FPS changed to" << fps << "(" << intervalMs << "ms interval)";
+        LOG_DEBUG("[MainWindow] Waveform FPS changed to" << fps << "(" << intervalMs << "ms interval)");
     }
 
     // Save to settings
@@ -1151,7 +1152,7 @@ void MainWindow::onChipVisFPSChanged(int fps)
     if (m_chipVisRenderTimer) {
         int intervalMs = 1000 / fps;
         m_chipVisRenderTimer->setInterval(intervalMs);
-        qDebug() << "[MainWindow] ChipVisualizer FPS changed to" << fps << "(" << intervalMs << "ms interval)";
+        LOG_DEBUG("[MainWindow] ChipVisualizer FPS changed to" << fps << "(" << intervalMs << "ms interval)");
     }
 
     // Save to settings
@@ -1517,14 +1518,14 @@ void MainWindow::onJTAGReset()
         scanController->stopPolling();
         isCapturing = false;
         ui->actionRun->setText("Run");
-        qDebug() << "[MainWindow] Worker stopped for JTAG Reset";
+        LOG_DEBUG("[MainWindow] Worker stopped for JTAG Reset");
     }
 
     // 2. Ejecutar reset JTAG (secuencia TMS: 5×1 + 1×0)
     // Esto deja el TAP en Run-Test/Idle sin instrucción cargada
     if (!scanController->resetJTAGStateMachine()) {
         updateStatusBar("JTAG Reset failed - check adapter connection");
-        qDebug() << "[MainWindow] JTAG Reset FAILED";
+        LOG_WARNING("[MainWindow] JTAG Reset FAILED");
         return;
     }
 
@@ -1541,7 +1542,7 @@ void MainWindow::onJTAGReset()
 
     // 4. Estado final: TAP en IDLE, worker parado, sin instrucción cargada
     updateStatusBar("JTAG TAP reset to RUN_TEST_IDLE - Select mode to continue");
-    qDebug() << "[MainWindow] JTAG Reset complete - TAP in IDLE, no instruction loaded";
+    LOG_INFO("[MainWindow] JTAG Reset complete - TAP in IDLE, no instruction loaded");
 }
 
 /**
@@ -1730,7 +1731,7 @@ void MainWindow::onPinTableItemChanged(QTableWidgetItem* item)
             return;
         }
 
-        qDebug() << "[onPinTableItemChanged] Renaming pin:" << oldRealName << "->" << newDisplayName;
+        LOG_DEBUG("[onPinTableItemChanged] Renaming pin:" << oldRealName << "->" << newDisplayName);
 
         // Verificar que tenemos un DeviceModel
         if (!scanController || !scanController->getDeviceModel()) {
@@ -1751,7 +1752,7 @@ void MainWindow::onPinTableItemChanged(QTableWidgetItem* item)
             for (auto& sig : waveformSignals) {
                 if (sig.name == oldRealName.toStdString()) {
                     sig.name = newDisplayName.toStdString();
-                    qDebug() << "[onPinTableItemChanged] Updated waveform signal name";
+                    LOG_VERBOSE("[onPinTableItemChanged] Updated waveform signal name");
                 }
             }
 
@@ -1761,7 +1762,7 @@ void MainWindow::onPinTableItemChanged(QTableWidgetItem* item)
                 auto data = std::move(it->second);
                 waveformBuffer.erase(it);
                 waveformBuffer[newDisplayName.toStdString()] = std::move(data);
-                qDebug() << "[onPinTableItemChanged] Updated waveform buffer key";
+                LOG_VERBOSE("[onPinTableItemChanged] Updated waveform buffer key");
             }
 
             // Propagar a control panel
@@ -1781,7 +1782,7 @@ void MainWindow::onPinTableItemChanged(QTableWidgetItem* item)
             m_waveformNeedsRedraw = true;
 
             updateStatusBar(QString("Pin renamed: %1 → %2").arg(oldRealName).arg(newDisplayName));
-            qDebug() << "[onPinTableItemChanged] Pin rename complete";
+            LOG_DEBUG("[onPinTableItemChanged] Pin rename complete");
         } else {
             // Renombrado falló (posiblemente nombre duplicado)
             QMessageBox::warning(this, "Rename Failed",
@@ -1825,7 +1826,7 @@ void MainWindow::onPinTableItemChanged(QTableWidgetItem* item)
         // Apply the change
         if (scanController->setPin(pinName, newLevel)) {
             scanController->applyChanges();
-            qDebug() << "[onPinTableItemChanged] Set pin" << realName << "to" << valueStr;
+            LOG_DEBUG("[onPinTableItemChanged] Set pin" << realName << "to" << valueStr);
             updateStatusBar(QString("Set %1 to %2").arg(realName).arg(valueStr));
         } else {
             QMessageBox::warning(this, "Pin Update Failed",
@@ -3566,7 +3567,7 @@ void MainWindow::onJTAGModeChanged(int modeId)
     scanController->setScanMode(targetMode);
 
     // LOG: Imprimir modo actual por consola
-    qDebug() << "[MainWindow] JTAG Mode changed to:" << modeName;
+    LOG_INFO("[MainWindow] JTAG Mode changed to:" << modeName);
 
     // Sincronizar isCapturing con el auto-inicio del worker
     // Si el modo requiere polling (todos menos BYPASS) y tenemos dispositivo inicializado,
@@ -3575,7 +3576,7 @@ void MainWindow::onJTAGModeChanged(int modeId)
         if (!isCapturing) {
             isCapturing = true;
             ui->actionRun->setText("Stop");
-            qDebug() << "[MainWindow] Worker auto-started, isCapturing set to true";
+            LOG_DEBUG("[MainWindow] Worker auto-started, isCapturing set to true");
         }
     }
 
@@ -3739,11 +3740,11 @@ void MainWindow::onControlPanelPinChanged(QString pinName, JTAG::PinLevel level)
     QString levelStr = (level == JTAG::PinLevel::LOW) ? "0" :
                        (level == JTAG::PinLevel::HIGH) ? "1" : "Z";
 
-    qDebug() << "[MainWindow] Control panel pin changed - Pin:" << pinName
-             << "Level:" << levelStr;
+    LOG_VERBOSE("[MainWindow] Control panel pin changed - Pin:" << pinName
+             << "Level:" << levelStr);
 
     if (!scanController) {
-        qDebug() << "[MainWindow] ERROR: scanController is null";
+        LOG_ERROR("[MainWindow] scanController is null");
         return;
     }
 
@@ -3751,7 +3752,7 @@ void MainWindow::onControlPanelPinChanged(QString pinName, JTAG::PinLevel level)
     std::string pinNameStd = pinName.toStdString();
 
     // Llamar al backend de forma asíncrona
-    qDebug() << "[MainWindow] Calling setPinAsync for pin:" << pinName;
+    LOG_VERBOSE("[MainWindow] Calling setPinAsync for pin:" << pinName);
     scanController->setPinAsync(pinNameStd, level);
 
     updateStatusBar(QString("Pin %1 set to %2")
@@ -3820,7 +3821,7 @@ void MainWindow::saveWindowState()
     // Add more settings as needed
 
     settings.sync();
-    qDebug() << "[MainWindow] Window state saved to:" << settings.fileName();
+    LOG_DEBUG("[MainWindow] Window state saved to:" << settings.fileName());
 }
 
 /**
@@ -3838,21 +3839,21 @@ void MainWindow::loadWindowState()
 {
     QSettings settings("layout.ini", QSettings::IniFormat);
 
-    qDebug() << "[MainWindow] Loading window state from:" << settings.fileName();
+    LOG_DEBUG("[MainWindow] Loading window state from:" << settings.fileName());
 
     // Restore window geometry and state
     QByteArray geometry = settings.value("MainWindow/geometry").toByteArray();
     if (!geometry.isEmpty()) {
         restoreGeometry(geometry);
-        qDebug() << "[MainWindow] Window geometry restored";
+        LOG_DEBUG("[MainWindow] Window geometry restored");
     } else {
-        qDebug() << "[MainWindow] No saved geometry found, using defaults";
+        LOG_DEBUG("[MainWindow] No saved geometry found, using defaults");
     }
 
     QByteArray windowState = settings.value("MainWindow/windowState").toByteArray();
     if (!windowState.isEmpty()) {
         restoreState(windowState);
-        qDebug() << "[MainWindow] Window state (docks, toolbars) restored";
+        LOG_DEBUG("[MainWindow] Window state (docks, toolbars) restored");
     }
 
     // Restore table column widths
@@ -3861,7 +3862,7 @@ void MainWindow::loadWindowState()
         for (int i = 0; i < columnWidths.size(); ++i) {
             ui->tableWidgetPins->setColumnWidth(i, columnWidths[i]);
         }
-        qDebug() << "[MainWindow] Table column widths restored";
+        LOG_DEBUG("[MainWindow] Table column widths restored");
     }
 
     // Restore splitter states if any
@@ -4195,7 +4196,7 @@ void MainWindow::onWaveformContextMenu(const QPoint &pos)
  */
 void MainWindow::resetProjectState()
 {
-    qDebug() << "[resetProjectState] Iniciando limpieza completa del proyecto...";
+    LOG_DEBUG("[resetProjectState] Iniciando limpieza completa del proyecto...");
 
     // ========================================================================
     // 1. DESCONECTAR SEÑALES Y PARAR BACKEND
@@ -4327,7 +4328,7 @@ void MainWindow::resetProjectState()
     // Actualizar título de ventana
     updateWindowTitle();
 
-    qDebug() << "[resetProjectState] Limpieza completada.";
+    LOG_DEBUG("[resetProjectState] Limpieza completada.");
 }
 
 // Función auxiliar: Crea una ruta relativa
@@ -4550,8 +4551,8 @@ bool MainWindow::loadProjectFromJson(const QString& filePath)
 
         // 4. Si hay discrepancia grave, preferir el cálculo basado en Hz (que es lo que ve el usuario)
         if (std::abs(currentPollInterval - calculatedInterval) > 5) {
-            qDebug() << "[Load] Fixing polling interval mismatch. JSON raw:" << rawInterval
-                << "Calculated from Hz:" << calculatedInterval;
+            LOG_DEBUG("[Load] Fixing polling interval mismatch. JSON raw:" << rawInterval
+                << "Calculated from Hz:" << calculatedInterval);
             currentPollInterval = calculatedInterval;
         }
         // -----------------------------------------------
@@ -4758,10 +4759,10 @@ bool MainWindow::loadProjectFromJson(const QString& filePath)
                 QTimer::singleShot(100, this, [this]() {
                     if (scanController && isCapturing) {
                         scanController->startPolling();
-                        qDebug() << "[ProjectLoad] Polling started safely.";
+                        LOG_DEBUG("[ProjectLoad] Polling started safely.");
                     }
                     else {
-                        qWarning() << "[ProjectLoad] Polling skipped: Controller null or Capture false";
+                        LOG_WARNING("[ProjectLoad] Polling skipped: Controller null or Capture false");
                     }
                     });
             }

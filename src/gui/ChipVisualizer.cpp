@@ -5,6 +5,7 @@
 #include <QGraphicsSceneMouseEvent>
 #include <QGraphicsSceneHoverEvent>
 #include <QToolTip>
+#include "utils/Log.h"
 
 // NUEVO: Para renderFromDeviceModel()
 #include "../bsdl/DeviceModel.h"
@@ -195,7 +196,7 @@ void ChipVisualizer::setChipSize(double width, double height) {
 
     m_chipWidth = width;
     m_chipHeight = height;
-    qDebug() << "[ChipVisualizer] setChipSize:" << m_chipWidth << "x" << m_chipHeight;
+    LOG_DEBUG("[ChipVisualizer] setChipSize:" << m_chipWidth << "x" << m_chipHeight);
 }
 
 ChipVisualizer::~ChipVisualizer() {
@@ -496,7 +497,7 @@ void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model, const
     // Si quieres usar valores del Wizard, asegúrate de pasarlos a esta clase.
     double w = this->m_chipWidth;
     double h = this->m_chipHeight;
-    qDebug() << "[ChipVisualizer] renderFromDeviceModel using dimensions:" << w << "x" << h;
+    LOG_DEBUG("[ChipVisualizer] renderFromDeviceModel using dimensions:" << w << "x" << h);
 
     // TODO: Si en el futuro añades las variables al .h, descomenta esto:
     // w = this->m_chipWidth;
@@ -542,10 +543,10 @@ void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model, const
         }
     }
 
-    qDebug() << "[ChipVisualizer] Pin distribution for" << w << "x" << h
+    LOG_DEBUG("[ChipVisualizer] Pin distribution for" << w << "x" << h
              << ": Top=" << nTop << ", Right=" << nRight
              << ", Bottom=" << nBottom << ", Left=" << nLeft
-             << "(Total=" << (nTop + nBottom + nLeft + nRight) << ")";
+             << "(Total=" << (nTop + nBottom + nLeft + nRight) << ")");
 
     // --- CALCULAR TAMAÑO DE FUENTE ÓPTIMO ---
     // Basado en el mínimo spacing entre pines
@@ -595,8 +596,8 @@ void ChipVisualizer::renderFromDeviceModel(const JTAG::DeviceModel& model, const
         if (uniformPinSize > 18.0) uniformPinSize = 18.0;
         if (uniformPinSize < 4.0) uniformPinSize = 4.0;
     }
-    qDebug() << "[ChipVisualizer] Uniform pin size:" << uniformPinSize
-             << "(based on min spacing:" << minSpacing << ")";
+    LOG_DEBUG("[ChipVisualizer] Uniform pin size:" << uniformPinSize
+             << "(based on min spacing:" << minSpacing << ")");
 
     // -----------------------------------------------------------------------
     // RENDERIZADO (DIBUJO EN SCENE)
@@ -856,7 +857,7 @@ void ChipVisualizer::renderPlaceholder(uint32_t idcode) {
     // Usamos m_chipWidth en lugar de m_customWidth
     double w = m_chipWidth;
     double h = m_chipHeight;
-    qDebug() << "[ChipVisualizer] renderPlaceholder using dimensions:" << w << "x" << h;
+    LOG_DEBUG("[ChipVisualizer] renderPlaceholder using dimensions:" << w << "x" << h);
 
     // Dibujar cuerpo base usando las dimensiones personalizadas
     m_chipBody = m_scene->addRect(-w / 2, -h / 2, w, h,
