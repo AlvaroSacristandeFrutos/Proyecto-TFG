@@ -795,7 +795,8 @@ void MainWindow::setupConnections()
     connect(ui->actionWaveform_Zoom_In, &QAction::triggered, this, &MainWindow::onWaveformZoomIn);
     connect(ui->actionWaveform_Zoom_Out, &QAction::triggered, this, &MainWindow::onWaveformZoomOut);
     connect(ui->actionWaveform_Go_to_Time, &QAction::triggered, this, &MainWindow::onWaveformGoToTime);
-    
+    connect(ui->actionWaveform_Set_Time_to_0, &QAction::triggered, this, &MainWindow::onWaveRestartTime);
+
     // Help menu connections
     connect(ui->actionHelp_Contents, &QAction::triggered, this, &MainWindow::onHelpContents);
     connect(ui->actionAbout, &QAction::triggered, this, &MainWindow::onAbout);
@@ -818,6 +819,7 @@ void MainWindow::setupConnections()
     connect(ui->actionWaveFit, &QAction::triggered, this, &MainWindow::onWaveFit);
     connect(ui->actionWaveGoto, &QAction::triggered, this, &MainWindow::onWaveGoto);
     connect(ui->actionWaveRestartTime, &QAction::triggered, this, &MainWindow::onWaveRestartTime);
+    connect(ui->actionWaveReload, &QAction::triggered, this, &MainWindow::onWaveReload);
 
     // Control Panel connection
     if (controlPanel) {
@@ -2561,6 +2563,13 @@ void MainWindow::onWaveRestartTime()
     redrawWaveform();
 
     updateStatusBar("Time reset to 0 - signals ready for capture");
+}
+
+void MainWindow::onWaveReload()
+{
+    // Solo redibujar sin borrar datos ni resetear tiempo
+    redrawWaveform();
+    updateStatusBar("Waveform reloaded");
 }
 
 // ============================================================================

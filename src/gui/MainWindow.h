@@ -133,6 +133,7 @@ private slots:
     void onWaveFit();
     void onWaveGoto();
     void onWaveRestartTime();  // Clear data and restart time from 0
+    void onWaveReload();       // Redraw waveform without clearing data
 
     // NUEVOS slots para recibir datos del worker
     // FASE 2: shared_ptr evita copias innecesarias del vector completo
@@ -232,7 +233,7 @@ private:
     std::unordered_map<std::string, std::deque<WaveformSample>> waveformBuffer;  // O(1) lookup
     QElapsedTimer captureTimer;
     qint64 captureTimeOffset = 0;  // Acumula tiempo de sesiones anteriores (ms) para pause/resume
-    const size_t MAX_WAVEFORM_SAMPLES = 10000;  // Circular buffer limit
+    const size_t MAX_WAVEFORM_SAMPLES = 100000;  // Circular buffer limit (~100s at 1000 samples/s)
 
     // Performance settings
     int currentPollInterval = 100;      // Polling interval in ms (default: 100ms)

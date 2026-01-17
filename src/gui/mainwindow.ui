@@ -125,6 +125,8 @@
     <addaction name="actionWaveform_Zoom_Out"/>
     <addaction name="separator"/>
     <addaction name="actionWaveform_Go_to_Time"/>
+    <addaction name="separator"/>
+    <addaction name="actionWaveform_Set_Time_to_0"/>
    </widget>
    <widget class="QMenu" name="menuSettings">
     <property name="title">
@@ -482,6 +484,7 @@ QToolButton {
        <addaction name="actionWaveGoto"/>
        <addaction name="separator"/>
        <addaction name="actionWaveRestartTime"/>
+       <addaction name="actionWaveReload"/>
       </widget>
      </item>
      <item>
@@ -736,6 +739,14 @@ QHeaderView::section {
     <string>Clear data and restart time from 0</string>
    </property>
   </action>
+  <action name="actionWaveReload">
+   <property name="text">
+    <string>🔄 Reload</string>
+   </property>
+   <property name="toolTip">
+    <string>Redraw waveform with current data</string>
+   </property>
+  </action>
   <action name="actionJTAG_Connection">
    <property name="text">
     <string>JTAG Connection...</string>
@@ -876,6 +887,14 @@ QHeaderView::section {
   <action name="actionWaveform_Go_to_Time">
    <property name="text">
     <string>Go to Time...</string>
+   </property>
+  </action>
+  <action name="actionWaveform_Set_Time_to_0">
+   <property name="text">
+    <string>Set Time to 0</string>
+   </property>
+   <property name="toolTip">
+    <string>Clear waveform data and restart time from 0</string>
    </property>
   </action>
   <action name="actionHelp_Contents">
