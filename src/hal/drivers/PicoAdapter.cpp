@@ -1,220 +1,241 @@
 #include "PicoAdapter.h"
 #include <iostream>
-#include <thread>
-#include <chrono>
-#include <QSerialPortInfo>
 
-//EST� STUBBEADO DE MOMENTO
+#if defined(_WIN32)
+    #define JLINK_LIB_NAME "JLink_x64.dll"
+#else
+    #define JLINK_LIB_NAME "./libjlinkarm.so"
+#endif
 
 namespace JTAG {
 
-    // Detección dinámica de Pico por USB
-    bool PicoAdapter::isDeviceConnected() {
-        // VID/PID del Raspberry Pi Pico en modo CDC
-        const quint16 PICO_VID = 0x2E8A;  // Raspberry Pi
-        const quint16 PICO_PID = 0x000A;  // Pico (CDC mode)
+// -------------------------------------------------------------------------
+// Detección estática: carga la DLL y consulta el número de dispositivos
+// -------------------------------------------------------------------------
 
-        const auto ports = QSerialPortInfo::availablePorts();
-        for (const auto& port : ports) {
-            if (port.vendorIdentifier() == PICO_VID &&
-                port.productIdentifier() == PICO_PID) {
-                return true;
-            }
-        }
+bool PicoAdapter::isDeviceConnected() {
+    /* Delega en GetList igual que JLinkAdapter::enumerateJLinkDevices().
+     * La DLL usa caché interna (3 s) para no escanear el puerto dos veces
+     * cuando JLinkAdapter también llama a GetList en el mismo ciclo. */
+#if defined(_WIN32)
+    HMODULE h = LoadLibraryA(JLINK_LIB_NAME);
+    if (!h) return false;
+    typedef unsigned int (__cdecl *FnGetList)(unsigned int, void*, unsigned int);
+    auto fn = reinterpret_cast<FnGetList>(
+                  GetProcAddress(h, "JLINKARM_EMU_GetList"));
+    unsigned int n = fn ? fn(1u, nullptr, 0u) : 0u;
+    FreeLibrary(h);
+    return n > 0u;
+#else
+    return false;
+#endif
+}
+
+std::string PicoAdapter::findPicoPort() {
+    return isDeviceConnected() ? JLINK_LIB_NAME : "";
+}
+
+// -------------------------------------------------------------------------
+// Constructor / Destructor
+// -------------------------------------------------------------------------
+
+PicoAdapter::PicoAdapter() {}
+
+PicoAdapter::~PicoAdapter() {
+    close();
+}
+
+// -------------------------------------------------------------------------
+// Carga / descarga de la DLL
+// -------------------------------------------------------------------------
+
+bool PicoAdapter::loadLibrary() {
+    if (libHandle) return true;
+
+#if defined(_WIN32)
+    libHandle = LoadLibraryA(JLINK_LIB_NAME);
+#else
+    libHandle = dlopen(JLINK_LIB_NAME, RTLD_NOW);
+#endif
+    if (!libHandle) {
+        std::cerr << "[PicoAdapter] Cannot load " << JLINK_LIB_NAME << "\n";
         return false;
     }
 
-    std::string PicoAdapter::findPicoPort() {
-        const quint16 PICO_VID = 0x2E8A;
-        const quint16 PICO_PID = 0x000A;
+#if defined(_WIN32)
+    #define GETPROC(var, name) \
+        var = reinterpret_cast<decltype(var)>(GetProcAddress(libHandle, name))
+#else
+    #define GETPROC(var, name) \
+        var = reinterpret_cast<decltype(var)>(dlsym(libHandle, name))
+#endif
 
-        const auto ports = QSerialPortInfo::availablePorts();
-        for (const auto& port : ports) {
-            if (port.vendorIdentifier() == PICO_VID &&
-                port.productIdentifier() == PICO_PID) {
-                return port.portName().toStdString();
-            }
-        }
-        return "";
+    GETPROC(pOpenEx,      "JLINKARM_OpenEx");
+    GETPROC(pClose,       "JLINKARM_Close");
+    GETPROC(pStoreRaw,    "JLINKARM_JTAG_StoreRaw");
+    GETPROC(pStoreGetRaw, "JLINKARM_JTAG_StoreGetRaw");
+    GETPROC(pSyncBits,    "JLINKARM_JTAG_SyncBits");
+    GETPROC(pSetSpeed,    "JLINKARM_SetSpeed");
+    GETPROC(pReset,       "JLINKARM_Reset");
+
+#undef GETPROC
+
+    if (!pOpenEx || !pStoreGetRaw || !pSyncBits) {
+        std::cerr << "[PicoAdapter] Missing symbols in " << JLINK_LIB_NAME << "\n";
+        unloadLibrary();
+        return false;
+    }
+    return true;
+}
+
+void PicoAdapter::unloadLibrary() {
+    if (libHandle) {
+#if defined(_WIN32)
+        FreeLibrary(libHandle);
+#else
+        dlclose(libHandle);
+#endif
+        libHandle = nullptr;
+    }
+    pOpenEx = nullptr; pClose       = nullptr;
+    pStoreRaw = nullptr; pStoreGetRaw = nullptr;
+    pSyncBits = nullptr; pSetSpeed    = nullptr;
+    pReset    = nullptr;
+}
+
+// -------------------------------------------------------------------------
+// Gestión de conexión
+// -------------------------------------------------------------------------
+
+bool PicoAdapter::open() {
+    if (connected) return true;
+    if (!loadLibrary()) return false;
+
+    const char* err = pOpenEx(nullptr, nullptr);
+    if (err) {
+        std::cerr << "[PicoAdapter] OpenEx: " << err << "\n";
+        unloadLibrary();
+        return false;
     }
 
-    PicoAdapter::PicoAdapter() {
-    }
+    if (pSetSpeed) pSetSpeed(clockSpeed / 1000u);
 
-    PicoAdapter::~PicoAdapter() {
-        close();
-    }
+    connected = true;
+    std::cout << "[PicoAdapter] Connected via " << JLINK_LIB_NAME << "\n";
+    return true;
+}
 
-    bool PicoAdapter::open() {
-        // AQU�: Abrir puerto COM real (ej: COM3 o /dev/ttyACM0)
-        std::cout << "[PicoAdapter] Opening serial port...\n";
+void PicoAdapter::close() {
+    if (connected && pClose) pClose();
+    unloadLibrary();
+    connected = false;
+}
 
-        // Simulamos que enviamos un PING para ver si hay una Pico al otro lado
-        std::vector<uint8_t> response;
-        if (!transceivePacket(JtagCommand::CMD_PING, {}, response)) {
-            std::cerr << "[PicoAdapter] Handshake failed\n";
-            return false;
-        }
+bool PicoAdapter::isConnected() const {
+    return connected;
+}
 
-        connected = true;
+bool PicoAdapter::setClockSpeed(uint32_t speedHz) {
+    clockSpeed = speedHz;
+    if (connected && pSetSpeed) {
+        pSetSpeed(speedHz / 1000u);
         return true;
     }
+    return false;
+}
 
-    void PicoAdapter::close() {
-        if (connected) {
-            std::cout << "[PicoAdapter] Closing connection\n";
-            connected = false;
-        }
+// -------------------------------------------------------------------------
+// Primitivas JTAG
+// -------------------------------------------------------------------------
+
+bool PicoAdapter::shiftData(const std::vector<uint8_t>& tdi,
+                             std::vector<uint8_t>& tdo,
+                             size_t numBits,
+                             bool exitShift)
+{
+    if (!connected) return false;
+
+    size_t numBytes = (numBits + 7u) / 8u;
+    std::vector<uint8_t> tms(numBytes, 0u);
+    std::vector<uint8_t> tdoRaw(numBytes, 0u);
+
+    if (exitShift && numBits > 0u) {
+        size_t lastBit = numBits - 1u;
+        tms[lastBit / 8u] |= static_cast<uint8_t>(1u << (lastBit % 8u));
     }
 
-    bool PicoAdapter::isConnected() const {
-        return connected;
-    }
+    if (pStoreGetRaw)
+        pStoreGetRaw(tdi.data(), tdoRaw.data(), tms.data(),
+                     static_cast<unsigned int>(numBits));
+    if (pSyncBits) pSyncBits();
 
-    bool PicoAdapter::setClockSpeed(uint32_t speedHz) {
-        // Crear payload de 4 bytes (uint32 little endian)
-        std::vector<uint8_t> payload(4);
-        payload[0] = speedHz & 0xFF;
-        payload[1] = (speedHz >> 8) & 0xFF;
-        payload[2] = (speedHz >> 16) & 0xFF;
-        payload[3] = (speedHz >> 24) & 0xFF;
+    tdo = tdoRaw;
+    return true;
+}
 
-        std::vector<uint8_t> response;
-        if (transceivePacket(JtagCommand::CMD_SET_CLOCK, payload, response)) {
-            clockSpeed = speedHz;
-            return true;
-        }
-        return false;
-    }
+bool PicoAdapter::writeTMS(const std::vector<bool>& tmsSequence) {
+    if (!connected) return false;
 
-    // --------------------------------------------------------------------------
-    // IMPLEMENTACI�N CR�TICA: SHIFT DATA
-    // --------------------------------------------------------------------------
-    bool PicoAdapter::shiftData(const std::vector<uint8_t>& tdi,
-        std::vector<uint8_t>& tdo,
-        size_t numBits,
-        bool exitShift)
-    {
-        if (!connected) return false;
+    size_t numBits  = tmsSequence.size();
+    size_t numBytes = (numBits + 7u) / 8u;
+    std::vector<uint8_t> tms(numBytes, 0u);
+    std::vector<uint8_t> tdi(numBytes, 0u);
 
-        // 1. Construir Payload para CMD_SHIFT_DATA
-        // Estructura: [NumBits(4)] + [ExitShift(1)] + [TDI_Data(N)]
-        std::vector<uint8_t> payload;
-        payload.reserve(5 + tdi.size());
+    for (size_t i = 0u; i < numBits; ++i)
+        if (tmsSequence[i])
+            tms[i / 8u] |= static_cast<uint8_t>(1u << (i % 8u));
 
-        // NumBits (32-bit Little Endian)
-        payload.push_back(numBits & 0xFF);
-        payload.push_back((numBits >> 8) & 0xFF);
-        payload.push_back((numBits >> 16) & 0xFF);
-        payload.push_back((numBits >> 24) & 0xFF);
+    if (pStoreRaw)
+        pStoreRaw(tdi.data(), tms.data(), static_cast<unsigned int>(numBits));
+    if (pSyncBits) pSyncBits();
 
-        // Flags (ExitShift)
-        payload.push_back(exitShift ? 1 : 0);
+    return true;
+}
 
-        // Datos TDI
-        payload.insert(payload.end(), tdi.begin(), tdi.end());
+bool PicoAdapter::resetTAP() {
+    if (!connected) return false;
+    if (pReset) pReset();
+    return true;
+}
 
-        // 2. Transacci�n
-        std::vector<uint8_t> response;
-        if (!transceivePacket(JtagCommand::CMD_SHIFT_DATA, payload, response)) {
-            return false;
-        }
+// -------------------------------------------------------------------------
+// Métodos de alto nivel
+// -------------------------------------------------------------------------
 
-        // 3. Copiar respuesta (TDO) al buffer de salida
-        tdo = response;
-        return true;
-    }
+bool PicoAdapter::scanIR(uint8_t irLength,
+                          const std::vector<uint8_t>& dataIn,
+                          std::vector<uint8_t>& dataOut)
+{
+    if (!connected) return false;
+    if (!writeTMS({false, true, true, false, false})) return false;
+    if (!shiftData(dataIn, dataOut, irLength, true))  return false;
+    return writeTMS({true, false});
+}
 
-    bool PicoAdapter::writeTMS(const std::vector<bool>& tmsSequence) {
-        if (!connected) return false;
+bool PicoAdapter::scanDR(size_t drLength,
+                          const std::vector<uint8_t>& dataIn,
+                          std::vector<uint8_t>& dataOut)
+{
+    if (!connected) return false;
+    if (!writeTMS({false, true, false, false})) return false;
+    if (!shiftData(dataIn, dataOut, drLength, true)) return false;
+    return writeTMS({true, false});
+}
 
-        // Empaquetar bools en bytes
-        size_t numBits = tmsSequence.size();
-        size_t numBytes = (numBits + 7) / 8;
-        std::vector<uint8_t> tmsBytes(numBytes, 0);
+uint32_t PicoAdapter::readIDCODE() {
+    if (!connected) return 0u;
 
-        for (size_t i = 0; i < numBits; ++i) {
-            if (tmsSequence[i]) {
-                tmsBytes[i / 8] |= (1 << (i % 8));
-            }
-        }
+    if (pReset) pReset();
+    if (!writeTMS({false, true, false, false})) return 0u;
 
-        // Payload: [NumBits(1)] + [TMS_Bytes(N)]
-        // Nota: El protocolo define NumBits como 1 byte para TMS porque las secuencias son cortas
-        std::vector<uint8_t> payload;
-        payload.push_back(static_cast<uint8_t>(numBits));
-        payload.insert(payload.end(), tmsBytes.begin(), tmsBytes.end());
+    std::vector<uint8_t> dummy(4u, 0u), idBytes(4u);
+    if (!shiftData(dummy, idBytes, 32u, true)) return 0u;
+    writeTMS({true, false});
 
-        std::vector<uint8_t> dummy;
-        return transceivePacket(JtagCommand::CMD_WRITE_TMS, payload, dummy);
-    }
-
-    bool PicoAdapter::resetTAP() {
-        std::vector<uint8_t> dummy;
-        // Env�a comando dedicado RESET
-        return transceivePacket(JtagCommand::CMD_RESET_TAP, {}, dummy);
-    }
-
-    // --------------------------------------------------------------------------
-    // CAPA DE TRANSPORTE (SIMULADA POR AHORA)
-    // --------------------------------------------------------------------------
-    bool PicoAdapter::transceivePacket(JtagCommand cmd,
-        const std::vector<uint8_t>& payload,
-        std::vector<uint8_t>& responsePayload)
-    {
-        // 1. Construir paquete binario completo usando JtagProtocol.h
-        std::vector<uint8_t> packet = buildPacket(cmd, payload);
-
-        // DEBUG: Ver qu� estamos enviando
-        /*
-        std::cout << "[TX] Cmd: 0x" << std::hex << (int)cmd << " Len: " << payload.size() << std::dec << "\n";
-        */
-
-        // TODO: serial.write(packet);
-        // TODO: serial.read(header); -> parse length -> serial.read(payload + crc);
-
-        // --- SIMULACI�N DE RESPUESTA ---
-        // Simulamos que la Pico responde OK o devuelve datos (Loopback)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1)); // Simular latencia USB
-
-        if (cmd == JtagCommand::CMD_PING) {
-            // Ping OK
-            return true;
-        }
-        else if (cmd == JtagCommand::CMD_SHIFT_DATA) {
-            // En modo loopback simulado, TDO = TDI
-            // El payload enviado tiene 5 bytes de cabecera (bits+flags) que ignoramos para el loopback
-            if (payload.size() > 5) {
-                responsePayload.assign(payload.begin() + 5, payload.end());
-            }
-            return true;
-        }
-
-        return true; // Asumir �xito por defecto
-    }
-
-    // ========== MÉTODOS DE ALTO NIVEL (transaccionales) - STUBS ==========
-    // NOTA: Estos métodos requieren firmware funcional en el Pico
-    // Por ahora lanzan excepción para indicar que no están implementados
-
-    bool PicoAdapter::scanIR(uint8_t irLength, const std::vector<uint8_t>& dataIn,
-                             std::vector<uint8_t>& dataOut) {
-        std::cerr << "[PicoAdapter] ERROR: scanIR() requires firmware - NOT IMPLEMENTED\n";
-        throw std::runtime_error("PicoAdapter::scanIR() requires firmware - NOT IMPLEMENTED");
-        return false;
-    }
-
-    bool PicoAdapter::scanDR(size_t drLength, const std::vector<uint8_t>& dataIn,
-                             std::vector<uint8_t>& dataOut) {
-        std::cerr << "[PicoAdapter] ERROR: scanDR() requires firmware - NOT IMPLEMENTED\n";
-        throw std::runtime_error("PicoAdapter::scanDR() requires firmware - NOT IMPLEMENTED");
-        return false;
-    }
-
-    uint32_t PicoAdapter::readIDCODE() {
-        std::cerr << "[PicoAdapter] ERROR: readIDCODE() requires firmware - NOT IMPLEMENTED\n";
-        throw std::runtime_error("PicoAdapter::readIDCODE() requires firmware - NOT IMPLEMENTED");
-        return 0;
-    }
+    return static_cast<uint32_t>(idBytes[0])
+         | (static_cast<uint32_t>(idBytes[1]) << 8u)
+         | (static_cast<uint32_t>(idBytes[2]) << 16u)
+         | (static_cast<uint32_t>(idBytes[3]) << 24u);
+}
 
 } // namespace JTAG
