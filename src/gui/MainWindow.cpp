@@ -59,6 +59,10 @@
 #include <QFile>
 #include <QDateTime>
 #include <filesystem>
+#include <future>
+#include <chrono>
+#include <QProgressDialog>
+#include <QApplication>
 
 
 // Standard Library
@@ -1191,8 +1195,21 @@ void MainWindow::onJTAGConnection()
         return;
     }
 
-    // Detectar adaptadores JTAG disponibles (Mock, J-Link, Pico, etc.)
-    auto adapters = scanController->getDetectedAdapters();
+    // Detectar adaptadores en hilo background para no bloquear la GUI
+    QProgressDialog progress("Detectando adaptadores JTAG...", QString(), 0, 0, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    progress.show();
+    QApplication::processEvents();
+
+    auto future = std::async(std::launch::async, [this]() {
+        return scanController->getDetectedAdapters();
+    });
+    while (future.wait_for(std::chrono::milliseconds(30)) != std::future_status::ready)
+        QApplication::processEvents();
+    progress.hide();
+
+    auto adapters = future.get();
 
     if (adapters.empty()) {
         QMessageBox::warning(this, "No Adapters",

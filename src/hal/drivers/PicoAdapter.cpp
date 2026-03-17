@@ -14,18 +14,19 @@ namespace JTAG {
 // -------------------------------------------------------------------------
 
 bool PicoAdapter::isDeviceConnected() {
-    /* Delega en GetList igual que JLinkAdapter::enumerateJLinkDevices().
-     * La DLL usa caché interna (3 s) para no escanear el puerto dos veces
-     * cuando JLinkAdapter también llama a GetList en el mismo ciclo. */
+    /* Mantiene el DLL cargado (handle estático) para que la caché interna
+     * de GetList sobreviva hasta que JLinkAdapter haga su propia llamada
+     * en el mismo ciclo de factory scan — evita doble pico_detect(). */
 #if defined(_WIN32)
-    HMODULE h = LoadLibraryA(JLINK_LIB_NAME);
-    if (!h) return false;
+    static HMODULE s_hLib = nullptr;
+    if (!s_hLib) {
+        s_hLib = LoadLibraryA(JLINK_LIB_NAME);
+        if (!s_hLib) return false;
+    }
     typedef unsigned int (__cdecl *FnGetList)(unsigned int, void*, unsigned int);
     auto fn = reinterpret_cast<FnGetList>(
-                  GetProcAddress(h, "JLINKARM_EMU_GetList"));
-    unsigned int n = fn ? fn(1u, nullptr, 0u) : 0u;
-    FreeLibrary(h);
-    return n > 0u;
+                  GetProcAddress(s_hLib, "JLINKARM_EMU_GetList"));
+    return fn ? fn(1u, nullptr, 0u) > 0u : false;
 #else
     return false;
 #endif
