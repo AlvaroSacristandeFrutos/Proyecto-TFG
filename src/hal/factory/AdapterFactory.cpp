@@ -130,23 +130,21 @@ namespace JTAG {
         });
 #endif
 
-        // 2. PICO: USB Detection (already implemented)
-        if (PicoAdapter::isDeviceConnected()) {
-            std::string picoPort = PicoAdapter::findPicoPort();
-            std::cout << "[Factory] Found Raspberry Pi Pico on port: " << picoPort << "\n";
-            availableAdapters.push_back({
-                AdapterType::PICO,
-                "Raspberry Pi Pico",
-                picoPort.empty() ? "USB Device" : picoPort,
-                "PICO_" + picoPort
-            });
-        }
-
-        // 3. JLINK: USB Enumeration
+        // Detección única via JLink DLL — PicoAdapter y JLinkAdapter
+        // comparten el mismo hardware; una sola llamada sirve para ambos.
+        std::cout << "[Factory] Checking JLinkAdapter...\n";
         auto jlinkDevices = JLinkAdapter::enumerateJLinkDevices();
         std::cout << "[Factory] Found " << jlinkDevices.size() << " J-Link device(s)\n";
 
         for (const auto& device : jlinkDevices) {
+            // Entrada PicoAdapter (protocolo nativo)
+            availableAdapters.push_back({
+                AdapterType::PICO,
+                "Raspberry Pi Pico",
+                "S/N: " + std::to_string(device.serialNumber),
+                "PICO_" + std::to_string(device.serialNumber)
+            });
+            // Entrada JLinkAdapter (API SEGGER)
             availableAdapters.push_back({
                 AdapterType::JLINK,
                 "SEGGER " + device.productName,

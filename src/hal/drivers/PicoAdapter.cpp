@@ -20,7 +20,15 @@ bool PicoAdapter::isDeviceConnected() {
 #if defined(_WIN32)
     static HMODULE s_hLib = nullptr;
     if (!s_hLib) {
-        s_hLib = LoadLibraryA(JLINK_LIB_NAME);
+        /* Cargar por ruta completa (directorio del exe) para evitar que
+         * Windows busque en el PATH — rutas de red en PATH pueden tardar
+         * exactamente 30 s en timeout al primer intento. */
+        char exePath[MAX_PATH];
+        GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+        char *sep = strrchr(exePath, '\\');
+        if (sep) { *(sep + 1) = '\0'; strncat(exePath, JLINK_LIB_NAME, MAX_PATH - strlen(exePath) - 1); }
+        s_hLib = LoadLibraryA(exePath);
+        if (!s_hLib) s_hLib = LoadLibraryA(JLINK_LIB_NAME); /* fallback */
         if (!s_hLib) return false;
     }
     typedef unsigned int (__cdecl *FnGetList)(unsigned int, void*, unsigned int);
@@ -54,7 +62,12 @@ bool PicoAdapter::loadLibrary() {
     if (libHandle) return true;
 
 #if defined(_WIN32)
-    libHandle = LoadLibraryA(JLINK_LIB_NAME);
+    char exePath2[MAX_PATH];
+    GetModuleFileNameA(nullptr, exePath2, MAX_PATH);
+    char *sep2 = strrchr(exePath2, '\\');
+    if (sep2) { *(sep2 + 1) = '\0'; strncat(exePath2, JLINK_LIB_NAME, MAX_PATH - strlen(exePath2) - 1); }
+    libHandle = LoadLibraryA(exePath2);
+    if (!libHandle) libHandle = LoadLibraryA(JLINK_LIB_NAME);
 #else
     libHandle = dlopen(JLINK_LIB_NAME, RTLD_NOW);
 #endif
