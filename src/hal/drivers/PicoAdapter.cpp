@@ -178,11 +178,16 @@ bool PicoAdapter::shiftData(const std::vector<uint8_t>& tdi,
         tms[lastBit / 8u] |= static_cast<uint8_t>(1u << (lastBit % 8u));
     }
 
+    int rc = -1;
     if (pStoreGetRaw)
-        pStoreGetRaw(tdi.data(), tdoRaw.data(), tms.data(),
-                     static_cast<unsigned int>(numBits));
+        rc = pStoreGetRaw(tdi.data(), tdoRaw.data(), tms.data(),
+                          static_cast<unsigned int>(numBits));
     if (pSyncBits) pSyncBits();
 
+    if (rc < 0) {
+        connected = false;
+        return false;
+    }
     tdo = tdoRaw;
     return true;
 }
@@ -199,10 +204,15 @@ bool PicoAdapter::writeTMS(const std::vector<bool>& tmsSequence) {
         if (tmsSequence[i])
             tms[i / 8u] |= static_cast<uint8_t>(1u << (i % 8u));
 
+    int rc = -1;
     if (pStoreRaw)
-        pStoreRaw(tdi.data(), tms.data(), static_cast<unsigned int>(numBits));
+        rc = pStoreRaw(tdi.data(), tms.data(), static_cast<unsigned int>(numBits));
     if (pSyncBits) pSyncBits();
 
+    if (rc < 0) {
+        connected = false;
+        return false;
+    }
     return true;
 }
 
