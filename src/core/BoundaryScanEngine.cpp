@@ -44,8 +44,8 @@ namespace JTAG {
             return false;
         }
 
-        currentState = TAPState::TEST_LOGIC_RESET;
-        std::cout << "BoundaryScanEngine::reset() - TAP reset to TEST_LOGIC_RESET\n";
+        currentState = TAPState::RUN_TEST_IDLE;
+        std::cout << "BoundaryScanEngine::reset() - TAP reset to RUN_TEST_IDLE\n";
         return true;
     }
 

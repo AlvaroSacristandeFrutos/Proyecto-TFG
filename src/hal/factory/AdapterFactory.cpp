@@ -16,7 +16,6 @@ namespace JTAG {
             return std::make_unique<MockAdapter>();
 
         case AdapterType::PICO:
-            std::cerr << "WARNING: PicoAdapter is a STUB - NOT FULLY IMPLEMENTED\n";
             return std::make_unique<PicoAdapter>();
 
         case AdapterType::JLINK:
@@ -36,7 +35,6 @@ namespace JTAG {
             return std::make_unique<MockAdapter>();
 
         case AdapterType::PICO:
-            std::cerr << "WARNING: PicoAdapter is a STUB - NOT FULLY IMPLEMENTED\n";
             return std::make_unique<PicoAdapter>();
 
         case AdapterType::JLINK: {

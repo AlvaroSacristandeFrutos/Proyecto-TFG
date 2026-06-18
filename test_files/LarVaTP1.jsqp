@@ -62,12 +62,13 @@
         "samplesPerSecond": 30,
         "waveformFPS": 1
     },
-    "timestamp": "2026-01-15T19:02:09",
+    "timestamp": "2026-05-18T18:07:29",
     "waveform": {
         "autoScrollEnabled": true,
-        "scrollPosition": 501,
+        "scrollPosition": 1288,
         "signals": [
-            "ICE_LED1"
+            "ICE_LED1",
+            "ICE_LED4"
         ],
         "timebase": 1
     }

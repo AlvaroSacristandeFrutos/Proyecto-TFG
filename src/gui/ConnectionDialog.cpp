@@ -120,8 +120,7 @@ void ConnectionDialog::updateDescription() {
             description = "<b>Segger J-Link</b><br>Professional JTAG probe.";
             break;
         case AdapterType::PICO:
-            description = "<b style='color:red;'>⚠ WARNING: NOT IMPLEMENTED</b><br><br>"
-                         "<b>Raspberry Pi Pico</b><br>Low cost USB-JTAG (STUB ONLY).";
+            description = "<b>Raspberry Pi Pico</b><br>Low cost USB-JTAG adapter.";
             break;
         default:
             description = "Unknown adapter.";
